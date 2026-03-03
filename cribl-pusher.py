@@ -237,6 +237,19 @@ def main():
     total_before = count_all_routes(current_obj)
     log.info(f"Loaded total routes (all groups): {total_before}")
 
+    # ── 1b) GET existing destinations ─────────────────────────────────────────
+    dget = GET(outputs_url)
+    if dget.status_code != 200:
+        die(f"[ERR] GET {outputs_url}: {dget.status_code} {dget.text}")
+
+    dget_data = dget.json()
+    existing_dest_ids = {
+        item["id"]
+        for item in dget_data.get("items", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    log.info(f"Loaded existing destinations: {len(existing_dest_ids)}")
+
     if total_before < min_routes:
         die(f"[SAFETY] Refusing to PATCH: total_before={total_before} < min={min_routes}")
 
@@ -347,10 +360,15 @@ def main():
         json.dump(current_obj, f, indent=2)
     log.info(f"[SNAPSHOT] {snap_file}")
 
-    # ── 6) Upsert destinations ────────────────────────────────────────────────
+    # ── 6) Create destinations ────────────────────────────────────────────────
     for appid, appname in apps:
+        dest_id = f"hcsc-blob-storage-northcentralus-{appid}"
+
+        if dest_id in existing_dest_ids:
+            log.info(f"[SKIP] Destination already exists: {dest_id} — skipping")
+            continue
+
         dest                  = copy.deepcopy(dest_template)
-        dest_id               = f"hcsc-blob-storage-northcentralus-{appid}"
         dest["id"]            = dest_id
         dest["containerName"] = f'"{appid}"'
         dest["description"]   = appname
@@ -358,15 +376,8 @@ def main():
             dest["name"] = dest_id
 
         rp = POST(outputs_url, dest)
-        _already_exists = (
-            400 <= rp.status_code < 500
-            or "already exist" in rp.text.lower()
-        )
         if rp.status_code in (200, 201):
             log.info(f"[OK] Created destination {dest_id}")
-        elif _already_exists:
-            log.info(f"[SKIP] Destination already exists: {dest_id} — skipping")
-            log.debug(f"       Cribl said ({rp.status_code}): {rp.text}")
         else:
             die(f"[ERR] Create destination {dest_id}: {rp.status_code} {rp.text}")
 

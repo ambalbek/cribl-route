@@ -484,6 +484,52 @@ assert total_after_sim >= total_before_sim - len(existing_routes), \
     "safety count adjustment produces inconsistent result"
 ok("total_before adjustment keeps safety check consistent with PATCH payload")
 
+# ── unwrap_response (PATCH payload fix) ──────────────────────────────────────
+section("17. unwrap_response — PATCH payload structure")
+
+# Cribl GET /routes returns {"count":N,"items":[{inner}]}.
+# PATCH expects just the inner object.  Sending the wrapper causes Cribl's JS
+# to call undefined.filter() (Array method) on a missing "routes" key.
+
+# Wrapped case: must return the inner route-table object
+wrapped = {
+    "count": 1,
+    "items": [
+        {"id": "default", "routes": [{"filter": "true", "final": True}], "groups": {}}
+    ],
+}
+inner = api.unwrap_response(wrapped)
+assert inner is wrapped["items"][0], "should return items[0] for wrapped response"
+assert "routes" in inner and "id" in inner
+ok("wrapped {'items':[{inner}]} -> returns inner route-table dict")
+
+# Non-wrapped case: must return the object unchanged
+flat = {"id": "default", "routes": [{"filter": "true", "final": True}], "groups": {}}
+assert api.unwrap_response(flat) is flat
+ok("non-wrapped {'routes':[...]} -> returned unchanged")
+
+# items-as-routes case (items are individual routes, not a table): also unchanged
+items_as_routes = {
+    "count": 2,
+    "items": [
+        {"filter": "x==1", "pipeline": "p"},
+        {"filter": "true",  "pipeline": "p", "final": True},
+    ],
+}
+result = api.unwrap_response(items_as_routes)
+assert result is items_as_routes, "items without routes/groups key should not be unwrapped"
+ok("items-as-routes (no routes/groups key in item) -> returned unchanged")
+
+# Mutation visibility: modifying inner routes is reflected when we re-unwrap
+wrapped2 = {
+    "count": 1,
+    "items": [{"id": "tbl", "routes": [{"filter": "old", "final": True}], "groups": []}],
+}
+inner2 = api.unwrap_response(wrapped2)
+inner2["routes"] = [{"filter": "new", "final": True}]
+assert api.unwrap_response(wrapped2)["routes"][0]["filter"] == "new"
+ok("mutations to the unwrapped inner dict are visible through the wrapper")
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 print(f"\n{'='*50}")
 print(f"PASSED: {PASS}   FAILED: {FAIL}")

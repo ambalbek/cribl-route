@@ -66,6 +66,14 @@ def _unwrap(obj: dict) -> dict:
     return obj
 
 
+# Public alias — used in cribl-pusher.py when building the PATCH payload.
+# Cribl's GET /routes returns {"count":N,"items":[{inner}]} but its PATCH handler
+# expects just the inner object {"id":…,"routes":[…],"groups":{…}}.
+# Sending the outer wrapper causes Cribl's JS to call undefined.filter() (Array
+# method) because payload.routes doesn't exist at the outer level.
+unwrap_response = _unwrap
+
+
 def get_routes_target(obj: dict, group_id: str | None):
     """
     Returns (target_container_dict, routes_key, group_created_bool).

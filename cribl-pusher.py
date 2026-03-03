@@ -25,6 +25,7 @@ from cribl_utils import (
 from cribl_api import (
     cribl_login_token, normalize_route, find_default_route_index,
     get_routes_target, create_group_if_missing, count_all_routes,
+    unwrap_response,
 )
 from cribl_config import (
     load_config, get_workspace_names, get_workspace,
@@ -306,8 +307,10 @@ def main():
     target_container[routes_key] = updated_routes
 
     # ── 3) Preview diff ───────────────────────────────────────────────────────
-    before_text = pretty_json(current_obj)
-    after_text  = pretty_json(patch_obj)
+    # Diff the unwrapped objects so the output shows routes directly,
+    # not the {"items":[…]} wrapper Cribl uses in GET responses.
+    before_text = pretty_json(unwrap_response(current_obj))
+    after_text  = pretty_json(unwrap_response(patch_obj))
     diff        = unified_diff(
         before_text, after_text,
         "routes_before.json", "routes_after.json",
@@ -374,7 +377,12 @@ def main():
             die(f"[ERR] Create destination {dest_id}: {rp.status_code} {rp.text}")
 
     # ── 7) PATCH routes ───────────────────────────────────────────────────────
-    rpatch = PATCH(routes_url, patch_obj)
+    # Cribl's GET /routes returns {"count":N,"items":[{inner}]}.
+    # The PATCH endpoint expects only the inner route-table object
+    # {"id":…,"routes":[…],"groups":{…}}.  Sending the outer wrapper causes
+    # Cribl's JS handler to call undefined.filter() (Array method) because
+    # payload.routes does not exist at the wrapper level.
+    rpatch = PATCH(routes_url, unwrap_response(patch_obj))
     if rpatch.status_code in (200, 204):
         log.info(f"[OK] PATCH {routes_url} -- added {len(new_routes)} new routes.")
         log.info(f"[ROLLBACK] Restore snapshot: {snap_file}")

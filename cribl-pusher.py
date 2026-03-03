@@ -268,7 +268,8 @@ def main():
 
     log.debug(f"Insertion point (before catch-all): index {default_idx} of {len(existing_routes)}")
 
-    new_routes = []
+    new_routes        = []
+    route_skipped_apps = set()   # appids whose route already existed
     for appid, appname in apps:
         route           = copy.deepcopy(route_template)
         route["id"]     = short_id("route")
@@ -279,6 +280,7 @@ def main():
 
         if route["name"] in existing_names or route["filter"] in existing_filters:
             log.info(f"[SKIP] route already exists for {appid}")
+            route_skipped_apps.add(appid)
             continue
 
         new_routes.append(route)
@@ -344,11 +346,16 @@ def main():
         if rp.status_code in (200, 201):
             log.info(f"[OK] Created destination {dest_id}")
         elif rp.status_code in (400, 409):
-            rpu = PATCH(f"{outputs_url}/{dest_id}", dest)
-            if rpu.status_code in (200, 204):
-                log.info(f"[OK] Updated destination {dest_id}")
+            if appid in route_skipped_apps:
+                # Route already existed and destination already exists — nothing to do
+                log.info(f"[SKIP] Already fully provisioned (route + destination): {appid}")
             else:
-                die(f"[ERR] Update destination {dest_id}: {rpu.status_code} {rpu.text}")
+                # Route is new but destination already exists — update it
+                rpu = PATCH(f"{outputs_url}/{dest_id}", dest)
+                if rpu.status_code in (200, 204):
+                    log.info(f"[OK] Updated destination {dest_id}")
+                else:
+                    die(f"[ERR] Update destination {dest_id}: {rpu.status_code} {rpu.text}")
         else:
             die(f"[ERR] Create destination {dest_id}: {rp.status_code} {rp.text}")
 

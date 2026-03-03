@@ -262,9 +262,20 @@ def main():
         die("[ERR] Target routes list is not a list (unexpected API shape)")
 
     # Existing routes are passed back exactly as received from Cribl.
-    # Do NOT normalize them — normalizing risks stripping fields (e.g. filter)
-    # that Cribl requires, especially if the array contains null/non-dict slots.
-    existing_routes  = [r for r in routes_list_raw if isinstance(r, dict)]
+    # Do NOT normalize them — normalizing risks stripping fields Cribl requires.
+    # Also exclude any dict that has no "filter" key: Cribl's JS reads route.filter
+    # on every entry in the array; a missing key returns JS undefined and throws
+    # "Cannot read properties of undefined (reading 'filter')".
+    all_dict_routes   = [r for r in routes_list_raw if isinstance(r, dict)]
+    existing_routes   = [r for r in all_dict_routes if r.get("filter") is not None]
+    filterless_dropped = len(all_dict_routes) - len(existing_routes)
+    if filterless_dropped:
+        log.warning(
+            f"[WARN] {filterless_dropped} route(s) in scope are missing the 'filter' field "
+            f"and will be excluded from the PATCH (they would crash Cribl's route processor)."
+        )
+        total_before -= filterless_dropped  # keep safety baseline consistent
+
     default_idx      = find_default_route_index(existing_routes)
     existing_names   = {r.get("name")   for r in existing_routes if r.get("name")}
     existing_filters = {r.get("filter") for r in existing_routes if r.get("filter")}

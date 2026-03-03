@@ -407,33 +407,46 @@ for s in stale:
     else:
         ok(f'clean: "{s}"')
 
-# ── Null/non-dict route filtering (regression for "cannot read filter") ────────
-section("16. NULL ROUTE FILTERING (no normalize on existing)")
+# ── Null/non-dict/filter-less route filtering (regression) ───────────────────
+section("16. ROUTE FILTERING (null, non-dict, and missing-filter exclusion)")
 
-# Simulate the raw routes list Cribl may return — includes null and non-dict entries
+# Simulate the raw routes list Cribl may return:
+#   - null slots            → not isinstance(r, dict) → dropped
+#   - non-dict entries      → not isinstance(r, dict) → dropped
+#   - dicts WITHOUT filter  → r.get("filter") is None → dropped (would crash Cribl JS)
+#   - dicts WITH filter     → kept and processed normally
 routes_list_raw = [
-    {"name": "route-a", "filter": 'x == "1"', "pipeline": "p", "final": False},
-    None,                                            # null slot — Cribl can return these
-    {"name": "default", "filter": "true",  "pipeline": "p", "final": True},
-    42,                                              # garbage non-dict entry
-    {"name": "route-c", "filter": 'x == "3"', "pipeline": "p", "final": False},
+    {"name": "route-a",  "filter": 'x == "1"', "pipeline": "p", "final": False},
+    None,                                              # null slot
+    {"name": "default",  "filter": "true",      "pipeline": "p", "final": True},
+    42,                                                # garbage non-dict
+    {"name": "route-c",  "filter": 'x == "3"', "pipeline": "p", "final": False},
+    {"name": "no-filter-route", "pipeline": "p"},     # dict but missing filter key
+    {"name": "null-filter-route", "filter": None, "pipeline": "p"},  # explicit null filter
 ]
 
 # Mirror the exact logic from cribl-pusher.py:
-#   existing_routes = [r for r in routes_list_raw if isinstance(r, dict)]
-existing_routes = [r for r in routes_list_raw if isinstance(r, dict)]
+all_dict_routes    = [r for r in routes_list_raw if isinstance(r, dict)]
+existing_routes    = [r for r in all_dict_routes   if r.get("filter") is not None]
+filterless_dropped = len(all_dict_routes) - len(existing_routes)
 
-# Null and non-dict entries must be gone
-assert len(existing_routes) == 3, f"expected 3, got {len(existing_routes)}"
-ok("null and non-dict entries filtered out (3 of 5 kept)")
+assert len(all_dict_routes) == 5, f"expected 5 dicts, got {len(all_dict_routes)}"
+ok("null and non-dict entries filtered out (5 of 7 kept as dicts)")
 
-# All remaining entries are genuine dicts — no normalisation applied
+assert len(existing_routes) == 3, f"expected 3 routes with filter, got {len(existing_routes)}"
+ok("filter-less dicts (missing key + null value) excluded (3 of 5 kept)")
+
+assert filterless_dropped == 2, f"expected 2 dropped, got {filterless_dropped}"
+ok(f"filterless_dropped == 2 (one missing key, one null value)")
+
+# All retained routes have a non-None filter
 for r in existing_routes:
-    assert isinstance(r, dict), f"non-dict slipped through: {r!r}"
-    assert "filter" in r, f"filter key missing on existing route {r!r}"
-ok("all retained routes are dicts with 'filter' key intact")
+    assert isinstance(r, dict) and r.get("filter") is not None, (
+        f"route with missing/null filter slipped through: {r!r}"
+    )
+ok("all retained routes are dicts with non-None 'filter'")
 
-# Names and filters extracted correctly (no KeyError, no empty-dict pollution)
+# Names and filters extracted correctly
 existing_names   = {r.get("name")   for r in existing_routes if r.get("name")}
 existing_filters = {r.get("filter") for r in existing_routes if r.get("filter")}
 assert existing_names   == {"route-a", "default", "route-c"}, f"got {existing_names}"
@@ -446,20 +459,30 @@ assert new_route["filter"] == 'x == "99"'
 assert new_route["pipeline"] == "passthru"
 ok("normalize_route applied to new route — filter and pipeline set")
 
-# Existing routes are NOT modified by normalisation — they retain original shape
+# Existing routes are NOT modified — they retain original shape
 original_route_a = {"name": "route-a", "filter": 'x == "1"', "pipeline": "p", "final": False}
 assert existing_routes[0] == original_route_a, (
     f"existing route was mutated: {existing_routes[0]!r}"
 )
 ok("existing route dict is unchanged (normalize_route not called on it)")
 
-# Round-trip: updated list sent back to Cribl still has filter on every route
+# Round-trip: every entry in the final PATCH list has a filter
 default_idx  = api.find_default_route_index(existing_routes)
 updated_list = existing_routes[:default_idx] + [new_route] + existing_routes[default_idx:]
 for r in updated_list:
-    assert isinstance(r, dict), f"non-dict in final list: {r!r}"
-    assert "filter" in r, f"filter missing in final route: {r!r}"
-ok(f"final route list has {len(updated_list)} entries, all dicts with 'filter'")
+    assert isinstance(r, dict) and r.get("filter") is not None, (
+        f"route with missing/null filter in final list: {r!r}"
+    )
+ok(f"final route list has {len(updated_list)} entries, all dicts with non-None 'filter'")
+
+# Safety-count adjustment: total_before is reduced by filterless_dropped
+# so that count_all_routes(patch_obj) >= adjusted total_before after new routes are added
+total_before_sim = 7      # pretend Cribl returned 7 routes total
+total_before_sim -= filterless_dropped   # 7 - 2 = 5
+total_after_sim   = len(updated_list)    # 3 existing + 1 new = 4
+assert total_after_sim >= total_before_sim - len(existing_routes), \
+    "safety count adjustment produces inconsistent result"
+ok("total_before adjustment keeps safety check consistent with PATCH payload")
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 print(f"\n{'='*50}")

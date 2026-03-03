@@ -264,61 +264,49 @@ try:
 except Exception as e:
     fail(f"config.json check failed: {e}")
 
-# ── Full-skip logic (route + destination both exist) ─────────────────────────
-section("13. FULL SKIP LOGIC")
+# ── Skip logic (route or destination already exists -> skip entirely) ─────────
+section("13. SKIP LOGIC")
 
 # Simulate: APP001 route already exists, APP002 is new
 existing_names_sim   = {"hcsc-blob-storage-route-APP001"}
 existing_filters_sim = {'apmId == "APP001"'}
 
-route_skipped_apps_sim = set()
-new_routes_sim = []
+new_routes_sim  = []
+skipped_sim     = []
 
 for appid in ("APP001", "APP002"):
     route_name   = f"hcsc-blob-storage-route-{appid}"
     route_filter = f'apmId == "{appid}"'
     if route_name in existing_names_sim or route_filter in existing_filters_sim:
-        route_skipped_apps_sim.add(appid)
+        skipped_sim.append(appid)
     else:
         new_routes_sim.append(appid)
 
-assert "APP001" in route_skipped_apps_sim
-assert "APP002" not in route_skipped_apps_sim
+assert skipped_sim   == ["APP001"]
 assert new_routes_sim == ["APP002"]
-ok("APP001 route correctly identified as existing, APP002 as new")
+ok("APP001 route correctly identified as existing -> skipped, APP002 as new")
 
-# Simulate destination POST responses and apply skip logic
-def _simulate_dest_upsert(appid, post_status, route_skipped):
-    """Returns action taken: 'created', 'updated', 'full_skip'"""
+# Simulate destination POST: 400/409 always skips, no update attempted
+def _simulate_dest_upsert(post_status):
+    """Returns action taken: 'created' or 'skipped' or 'error'"""
     if post_status in (200, 201):
         return "created"
     elif post_status in (400, 409):
-        if appid in route_skipped:
-            return "full_skip"   # both already exist
-        else:
-            return "updated"     # route new, dest exists → update
+        return "skipped"
     else:
         return "error"
 
-# APP001: route skipped, dest returns 409 → full skip
-assert _simulate_dest_upsert("APP001", 409, route_skipped_apps_sim) == "full_skip"
-ok("APP001 (route+dest both exist, 409): full_skip")
+assert _simulate_dest_upsert(201) == "created"
+ok("dest POST 201 -> created")
 
-# APP002: route new, dest returns 409 → update
-assert _simulate_dest_upsert("APP002", 409, route_skipped_apps_sim) == "updated"
-ok("APP002 (route new, dest exists, 409): updated")
+assert _simulate_dest_upsert(409) == "skipped"
+ok("dest POST 409 -> skipped (no update attempted)")
 
-# APP002: route new, dest doesn't exist → created
-assert _simulate_dest_upsert("APP002", 201, route_skipped_apps_sim) == "created"
-ok("APP002 (route new, dest new, 201): created")
+assert _simulate_dest_upsert(400) == "skipped"
+ok("dest POST 400 -> skipped (no update attempted)")
 
-# APP001: route skipped, dest returns 400 → also full skip
-assert _simulate_dest_upsert("APP001", 400, route_skipped_apps_sim) == "full_skip"
-ok("APP001 (route+dest both exist, 400): full_skip")
-
-# Any app, unexpected status → error
-assert _simulate_dest_upsert("APP001", 500, route_skipped_apps_sim) == "error"
-ok("500 status correctly falls through to error path")
+assert _simulate_dest_upsert(500) == "error"
+ok("dest POST 500 -> error")
 
 # ── Logger module ─────────────────────────────────────────────────────────────
 section("13. LOGGER MODULE")
@@ -411,10 +399,10 @@ for s in stale:
 section("16. ROUTE FILTERING (null, non-dict, and missing-filter exclusion)")
 
 # Simulate the raw routes list Cribl may return:
-#   - null slots            → not isinstance(r, dict) → dropped
-#   - non-dict entries      → not isinstance(r, dict) → dropped
-#   - dicts WITHOUT filter  → r.get("filter") is None → dropped (would crash Cribl JS)
-#   - dicts WITH filter     → kept and processed normally
+#   - null slots            -> not isinstance(r, dict) -> dropped
+#   - non-dict entries      -> not isinstance(r, dict) -> dropped
+#   - dicts WITHOUT filter  -> r.get("filter") is None -> dropped (would crash Cribl JS)
+#   - dicts WITH filter     -> kept and processed normally
 routes_list_raw = [
     {"name": "route-a",  "filter": 'x == "1"', "pipeline": "p", "final": False},
     None,                                              # null slot

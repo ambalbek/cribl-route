@@ -64,10 +64,18 @@ def read_apps_from_file(path: str):
 def prompt_choice(label: str, choices):
     choices_lower = [c.lower() for c in choices]
     while True:
-        val = input(f"{label} ({'/'.join(choices)}): ").strip().lower()
-        if val in choices_lower:
-            return val
-        print(f"Invalid choice. Pick one of: {choices}")
+        print(f"\n{label}:")
+        for i, c in enumerate(choices, 1):
+            print(f"  {i:>2}. {c}")
+        val = input("Enter number or name: ").strip()
+        # accept numeric shortcut
+        if val.isdigit():
+            idx = int(val) - 1
+            if 0 <= idx < len(choices):
+                return choices[idx]
+        elif val.lower() in choices_lower:
+            return choices[choices_lower.index(val.lower())]
+        print(f"Invalid choice. Enter a number (1-{len(choices)}) or a workspace name.")
 
 
 def prompt_text(label: str, default: str | None = None) -> str:

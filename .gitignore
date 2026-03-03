@@ -36,3 +36,6 @@ desktop.ini
 
 # Log files (--log-file output)
 *.log
+
+#.claude
+.claude

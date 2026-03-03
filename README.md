@@ -26,13 +26,14 @@ Automates adding **routes** and upserting **destinations** (blob storage outputs
 
 For each application you provide (by ID and name), the script:
 
-1. Reads the current route table from Cribl (`GET /api/v1/m/{worker_group}/routes/{routes_table}`)
-2. Inserts a new route above the catch-all/default route — skipping any that already exist
-3. Shows a full unified diff so you can review exactly what will change
-4. Asks for confirmation before writing anything
-5. Saves a rollback snapshot of the original route table
-6. Creates or updates the blob storage destination (`POST/PATCH /system/outputs`)
-7. Patches the route table back to Cribl (`PATCH /api/v1/m/{worker_group}/routes/{routes_table}`)
+1. Fetches the current route table from Cribl (`GET /api/v1/m/{worker_group}/routes/{routes_table}`)
+2. Fetches all existing destinations (`GET /system/outputs`) to build a skip-list
+3. Inserts a new route above the catch-all/default route — skipping any that already exist
+4. Shows a full unified diff so you can review exactly what will change
+5. Asks for confirmation before writing anything
+6. Saves a rollback snapshot of the original route table
+7. Creates any destination that does not already exist (`POST /system/outputs`) — skips if present
+8. Patches the route table back to Cribl (`PATCH /api/v1/m/{worker_group}/routes/{routes_table}`)
 
 Everything targets a **single Cribl URL** with multiple named **workspaces** (worker groups), configured in `config.json`.
 
@@ -44,7 +45,11 @@ Everything targets a **single Cribl URL** with multiple named **workspaces** (wo
 - **pip** packages:
 
 ```bash
+# CLI only
 pip install requests urllib3
+
+# CLI + web UI
+pip install requests urllib3 streamlit
 ```
 
 Verify your Python version:
@@ -61,10 +66,12 @@ python --version
 ```
 cribl-rout/
 │
-├── cribl-pusher.py              # Entry point — run this
+├── cribl-pusher.py              # CLI entry point — run this
+├── ui.py                        # Streamlit web UI — run with: streamlit run ui.py
 ├── cribl_api.py                 # Cribl API + route logic
 ├── cribl_config.py              # Config loading and workspace resolution
 ├── cribl_utils.py               # Shared utilities (I/O, prompts, HTTP session)
+├── cribl_logger.py              # Logging setup (setup_logging, get_logger)
 │
 ├── config.json                  # YOUR config (credentials + workspaces) — never commit
 ├── config.example.json          # Safe-to-commit template — copy this to config.json
@@ -264,14 +271,24 @@ Rules:
 
 ## Running the Script
 
-### Fully interactive (recommended for first use)
+### Option A — Web UI (easiest)
+
+```bash
+streamlit run ui.py
+```
+
+Opens `http://localhost:8501` in your browser. Select a workspace from the dropdown, fill in the app details or upload a bulk file, and click **Run cribl-pusher**. Output appears on the right panel. No terminal interaction needed.
+
+---
+
+### Option B — CLI (fully interactive, recommended for first use)
 
 ```bash
 python cribl-pusher.py
 ```
 
 The script will prompt you for:
-1. Workspace (choose from the list in config.json)
+1. Workspace (numbered list — type a number or the workspace name)
 2. Mode: single app or file
 3. App ID and name (if single mode)
 4. Username/password (if not set in config)
@@ -279,7 +296,7 @@ The script will prompt you for:
 
 ---
 
-### Single app, non-interactive
+### Single app, non-interactive (CLI)
 
 ```bash
 python cribl-pusher.py \
@@ -374,6 +391,8 @@ python cribl-pusher.py \
 | `--min-existing-total-routes` | *(from config)* | Override the safety minimum route count |
 | `--diff-lines` | *(from config)* | Lines of context in the diff preview |
 | `--snapshot-dir` | *(from config)* | Override the snapshot directory |
+| `--log-level` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `--log-file` | `""` | Append logs to this file in addition to the console |
 
 ---
 
@@ -535,3 +554,24 @@ Install dependencies:
 ```bash
 pip install requests urllib3
 ```
+
+---
+
+### `ModuleNotFoundError: No module named 'streamlit'`
+
+Install Streamlit to use the web UI:
+
+```bash
+pip install streamlit
+```
+
+---
+
+### Streamlit UI shows a blank right panel after clicking Run
+
+The script likely exited with an error before producing output. Check that:
+- `config.json` has the correct `base_url` and credentials
+- The workspace's `dest_template` file exists
+- You are not running in a network environment that blocks Cribl
+
+Enable **Debug** log level in the UI to see detailed output including each HTTP request.

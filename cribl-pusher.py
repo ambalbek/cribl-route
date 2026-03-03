@@ -358,11 +358,13 @@ def main():
             dest["name"] = dest_id
 
         rp = POST(outputs_url, dest)
+        _already_exists = (
+            400 <= rp.status_code < 500
+            or "already exist" in rp.text.lower()
+        )
         if rp.status_code in (200, 201):
             log.info(f"[OK] Created destination {dest_id}")
-        elif 400 <= rp.status_code < 500:
-            # Any 4xx means Cribl rejected the create — typically "already exists".
-            # Log the message at DEBUG so the reason is visible with --log-level DEBUG.
+        elif _already_exists:
             log.info(f"[SKIP] Destination already exists: {dest_id} — skipping")
             log.debug(f"       Cribl said ({rp.status_code}): {rp.text}")
         else:

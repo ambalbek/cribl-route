@@ -1,0 +1,22 @@
+.git/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+ENV/
+
+# Secrets — mount at runtime, never bake into image
+config.json
+cribl_snapshots/
+*.log
+
+# Dev-only files
+_validate.py
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+README.md

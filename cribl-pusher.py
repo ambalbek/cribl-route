@@ -298,8 +298,7 @@ def main():
 
     new_routes = []
     for appid, appname in apps:
-        route           = copy.deepcopy(route_template)
-        route["id"]     = short_id("route")
+        route["id"]     = appid
         route["filter"] = f'apmId == "{appid}"'
         route["output"] = f"hcsc-blob-storage-northcentralus-{appid}"
         route["name"]   = f"hcsc-blob-storage-route-{appid}"

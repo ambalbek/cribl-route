@@ -14,11 +14,12 @@ Automates adding **routes** and upserting **destinations** (blob storage outputs
 6. [Template Files](#template-files)
 7. [App Input Format](#app-input-format)
 8. [Running the Script](#running-the-script)
-9. [All CLI Flags](#all-cli-flags)
-10. [Logging](#logging)
-11. [Safety Features](#safety-features)
-12. [Rolling Back a Change](#rolling-back-a-change)
-13. [Troubleshooting](#troubleshooting)
+9. [Docker](#docker)
+10. [All CLI Flags](#all-cli-flags)
+11. [Logging](#logging)
+12. [Safety Features](#safety-features)
+13. [Rolling Back a Change](#rolling-back-a-change)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -41,7 +42,8 @@ Everything targets a **single Cribl URL** with multiple named **workspaces** (wo
 
 ## Prerequisites
 
-- **Python 3.10 or newer**
+- **Python 3.10 or newer** *(not needed if running via Docker)*
+- **Docker Desktop** *(optional — for the containerised option)*
 - **pip** packages:
 
 ```bash
@@ -72,6 +74,10 @@ cribl-rout/
 ├── cribl_config.py              # Config loading and workspace resolution
 ├── cribl_utils.py               # Shared utilities (I/O, prompts, HTTP session)
 ├── cribl_logger.py              # Logging setup (setup_logging, get_logger)
+│
+├── Dockerfile                   # Container image definition (python:3.13-slim, linux/amd64)
+├── .dockerignore                # Files excluded from the Docker build context
+├── requirements.txt             # Pip dependencies (requests, urllib3, streamlit)
 │
 ├── config.json                  # YOUR config (credentials + workspaces) — never commit
 ├── config.example.json          # Safe-to-commit template — copy this to config.json
@@ -271,7 +277,13 @@ Rules:
 
 ## Running the Script
 
-### Option A — Web UI (easiest)
+### Option A — Docker (no Python install needed)
+
+See the full [Docker](#docker) section below for build, run, and transfer instructions.
+
+---
+
+### Option B — Web UI (local)
 
 ```bash
 streamlit run ui.py
@@ -281,7 +293,7 @@ Opens `http://localhost:8501` in your browser. Select a workspace from the dropd
 
 ---
 
-### Option B — CLI (fully interactive, recommended for first use)
+### Option C — CLI (fully interactive, recommended for first use)
 
 ```bash
 python cribl-pusher.py
@@ -365,6 +377,93 @@ python cribl-pusher.py \
   --group-name "My New Group" \
   --from-file
 ```
+
+---
+
+## Docker
+
+The image is built on `python:3.13-slim` (linux/amd64) and contains only the application code. `config.json` and all template JSONs are **never baked in** — they are volume-mounted at runtime so secrets stay off the image.
+
+### Build
+
+```bash
+docker build -t cribl-pusher .
+```
+
+### Run
+
+Mount your `config.json` and all template files into `/app`:
+
+```bash
+# Linux / macOS / Git Bash
+docker run -p 8501:8501 \
+  -v $(pwd)/config.json:/app/config.json:ro \
+  -v $(pwd)/route_template.json:/app/route_template.json:ro \
+  -v $(pwd)/blob_dest_template_dev.json:/app/blob_dest_template_dev.json:ro \
+  -v $(pwd)/blob_dest_template_qa.json:/app/blob_dest_template_qa.json:ro \
+  -v $(pwd)/blob_dest_template_prod.json:/app/blob_dest_template_prod.json:ro \
+  cribl-pusher
+```
+
+```powershell
+# Windows PowerShell
+docker run -p 8501:8501 `
+  -v ${PWD}/config.json:/app/config.json:ro `
+  -v ${PWD}/route_template.json:/app/route_template.json:ro `
+  -v ${PWD}/blob_dest_template_dev.json:/app/blob_dest_template_dev.json:ro `
+  -v ${PWD}/blob_dest_template_qa.json:/app/blob_dest_template_qa.json:ro `
+  -v ${PWD}/blob_dest_template_prod.json:/app/blob_dest_template_prod.json:ro `
+  cribl-pusher
+```
+
+Then open `http://localhost:8501`.
+
+---
+
+### Save, Split, and Transfer
+
+Use this to move the image to a machine without internet access or through a system with a file-size limit.
+
+**On the source machine — export and split into 25 MB chunks:**
+
+```bash
+# Save image to a tar archive
+docker save cribl-pusher:latest -o cribl-pusher.tar
+
+# Split into 25 MB chunks (produces cribl-pusher.part.aa, .ab, .ac …)
+split -b 25m cribl-pusher.tar cribl-pusher.part.
+
+# Optional — record a checksum for integrity verification
+sha256sum cribl-pusher.tar > cribl-pusher.tar.sha256
+```
+
+**Transfer** all `cribl-pusher.part.*` files (and optionally `cribl-pusher.tar.sha256`) to the target machine.
+
+**On the target machine — reassemble and load:**
+
+```bash
+# Reassemble chunks back into the tar
+cat cribl-pusher.part.* > cribl-pusher.tar
+
+# Optional — verify integrity
+sha256sum -c cribl-pusher.tar.sha256
+
+# Load into Docker
+docker load -i cribl-pusher.tar
+```
+
+The image is then available as `cribl-pusher:latest` and can be run with the same `docker run` command above.
+
+---
+
+### Image size notes
+
+| Base image | Approx. size |
+|---|---|
+| `python:3.11-slim` (original) | ~500 MB |
+| `python:3.13-slim` (current) | ~380–420 MB |
+
+The reduction comes from switching to Python 3.13 (fewer CVEs, smaller stdlib) and stripping `*.pyc` files, test suites, and `.dist-info` metadata from all installed packages during the build. The remaining size is dominated by Streamlit's compiled dependencies (`pyarrow`, `pandas`, `numpy`) which cannot be reduced further without replacing Streamlit.
 
 ---
 
@@ -563,6 +662,22 @@ Install Streamlit to use the web UI:
 
 ```bash
 pip install streamlit
+```
+
+---
+
+### Docker container exits immediately / `config.json not found`
+
+The config and template files must be volume-mounted — they are not baked into the image. Make sure every `-v` mount in your `docker run` command points to an existing file on the host.
+
+---
+
+### Docker container can't reach Cribl (`Connection refused` / timeout)
+
+If Cribl is running on the same host machine, use `host.docker.internal` instead of `localhost` in `config.json`:
+
+```json
+"base_url": "https://host.docker.internal:9000"
 ```
 
 ---

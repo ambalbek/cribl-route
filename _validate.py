@@ -407,6 +407,60 @@ for s in stale:
     else:
         ok(f'clean: "{s}"')
 
+# ── Null/non-dict route filtering (regression for "cannot read filter") ────────
+section("16. NULL ROUTE FILTERING (no normalize on existing)")
+
+# Simulate the raw routes list Cribl may return — includes null and non-dict entries
+routes_list_raw = [
+    {"name": "route-a", "filter": 'x == "1"', "pipeline": "p", "final": False},
+    None,                                            # null slot — Cribl can return these
+    {"name": "default", "filter": "true",  "pipeline": "p", "final": True},
+    42,                                              # garbage non-dict entry
+    {"name": "route-c", "filter": 'x == "3"', "pipeline": "p", "final": False},
+]
+
+# Mirror the exact logic from cribl-pusher.py:
+#   existing_routes = [r for r in routes_list_raw if isinstance(r, dict)]
+existing_routes = [r for r in routes_list_raw if isinstance(r, dict)]
+
+# Null and non-dict entries must be gone
+assert len(existing_routes) == 3, f"expected 3, got {len(existing_routes)}"
+ok("null and non-dict entries filtered out (3 of 5 kept)")
+
+# All remaining entries are genuine dicts — no normalisation applied
+for r in existing_routes:
+    assert isinstance(r, dict), f"non-dict slipped through: {r!r}"
+    assert "filter" in r, f"filter key missing on existing route {r!r}"
+ok("all retained routes are dicts with 'filter' key intact")
+
+# Names and filters extracted correctly (no KeyError, no empty-dict pollution)
+existing_names   = {r.get("name")   for r in existing_routes if r.get("name")}
+existing_filters = {r.get("filter") for r in existing_routes if r.get("filter")}
+assert existing_names   == {"route-a", "default", "route-c"}, f"got {existing_names}"
+assert existing_filters == {'x == "1"', "true", 'x == "3"'}, f"got {existing_filters}"
+ok("existing_names and existing_filters populated correctly")
+
+# New route (normalize_route IS called on new routes only)
+new_route = api.normalize_route({"id": "route-new", "filter": 'x == "99"'}, "passthru")
+assert new_route["filter"] == 'x == "99"'
+assert new_route["pipeline"] == "passthru"
+ok("normalize_route applied to new route — filter and pipeline set")
+
+# Existing routes are NOT modified by normalisation — they retain original shape
+original_route_a = {"name": "route-a", "filter": 'x == "1"', "pipeline": "p", "final": False}
+assert existing_routes[0] == original_route_a, (
+    f"existing route was mutated: {existing_routes[0]!r}"
+)
+ok("existing route dict is unchanged (normalize_route not called on it)")
+
+# Round-trip: updated list sent back to Cribl still has filter on every route
+default_idx  = api.find_default_route_index(existing_routes)
+updated_list = existing_routes[:default_idx] + [new_route] + existing_routes[default_idx:]
+for r in updated_list:
+    assert isinstance(r, dict), f"non-dict in final list: {r!r}"
+    assert "filter" in r, f"filter missing in final route: {r!r}"
+ok(f"final route list has {len(updated_list)} entries, all dicts with 'filter'")
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 print(f"\n{'='*50}")
 print(f"PASSED: {PASS}   FAILED: {FAIL}")

@@ -261,10 +261,13 @@ def main():
     if not isinstance(routes_list_raw, list):
         die("[ERR] Target routes list is not a list (unexpected API shape)")
 
-    existing_routes  = [normalize_route(copy.deepcopy(r), fallback_pipeline) for r in routes_list_raw]
+    # Existing routes are passed back exactly as received from Cribl.
+    # Do NOT normalize them — normalizing risks stripping fields (e.g. filter)
+    # that Cribl requires, especially if the array contains null/non-dict slots.
+    existing_routes  = [r for r in routes_list_raw if isinstance(r, dict)]
     default_idx      = find_default_route_index(existing_routes)
-    existing_names   = {r.get("name") for r in existing_routes if isinstance(r, dict) and r.get("name")}
-    existing_filters = {r.get("filter") for r in existing_routes if isinstance(r, dict) and r.get("filter")}
+    existing_names   = {r.get("name")   for r in existing_routes if r.get("name")}
+    existing_filters = {r.get("filter") for r in existing_routes if r.get("filter")}
 
     log.debug(f"Insertion point (before catch-all): index {default_idx} of {len(existing_routes)}")
 

@@ -2,7 +2,7 @@
   "_comment": "Copy this file to config.json and fill in your values. config.json is gitignored.",
 
   "base_url": "https://YOUR_CRIBL_HOST:9000",
-  "skip_ssl": false,
+  "skip_ssl": true,
 
   "credentials": {
     "_comment": "Use token OR username+password. Token takes priority if both are set. Leave fields blank to be prompted at runtime.",

@@ -15,7 +15,7 @@ Automates adding **routes** and upserting **destinations** (blob storage outputs
 7. [App Input Format](#app-input-format)
 8. [Running the Script](#running-the-script)
 9. [All CLI Flags](#all-cli-flags)
-10. [Common Scenarios](#common-scenarios)
+10. [Logging](#logging)
 11. [Safety Features](#safety-features)
 12. [Rolling Back a Change](#rolling-back-a-change)
 13. [Troubleshooting](#troubleshooting)
@@ -26,13 +26,13 @@ Automates adding **routes** and upserting **destinations** (blob storage outputs
 
 For each application you provide (by ID and name), the script:
 
-1. Reads the current route table from Cribl (`GET /routes/default`)
+1. Reads the current route table from Cribl (`GET /api/v1/m/{worker_group}/routes/{routes_table}`)
 2. Inserts a new route above the catch-all/default route — skipping any that already exist
 3. Shows a full unified diff so you can review exactly what will change
 4. Asks for confirmation before writing anything
 5. Saves a rollback snapshot of the original route table
 6. Creates or updates the blob storage destination (`POST/PATCH /system/outputs`)
-7. Patches the route table back to Cribl (`PATCH /routes/default`)
+7. Patches the route table back to Cribl (`PATCH /api/v1/m/{worker_group}/routes/{routes_table}`)
 
 Everything targets a **single Cribl URL** with multiple named **workspaces** (worker groups), configured in `config.json`.
 
@@ -194,6 +194,7 @@ Each key under `workspaces` is a name you choose (e.g. `"dev"`, `"prod"`).
 |---|---|---|
 | `worker_group` | yes | Cribl worker group name — forms the API path `/api/v1/m/{worker_group}` |
 | `dest_template` | yes | Path to the destination template JSON for this workspace |
+| `routes_table` | no | Route table name in `GET/PATCH /routes/{routes_table}`. Defaults to `worker_group` value (e.g. `"dev"` → `/routes/dev`) |
 | `description` | no | Human-readable label shown in the run banner |
 | `require_allow` | no | If `true`, user must type `ALLOW` before any writes (recommended for prod) |
 | `skip_ssl` | no | Overrides the global `skip_ssl` for this workspace only |
@@ -376,6 +377,50 @@ python cribl-pusher.py \
 
 ---
 
+## Logging
+
+All output goes through Python's `logging` module via the shared `"cribl"` logger. Every run prints timestamps and level so logs are easy to search and audit.
+
+### Log format
+
+```
+2024-03-15 14:30:22  INFO      === TARGET ===
+2024-03-15 14:30:22  INFO      workspace    : dev
+2024-03-15 14:30:22  INFO      [OK] Created destination hcsc-blob-storage-northcentralus-APP001
+2024-03-15 14:30:22  WARNING   Workspace 'prod' requires explicit confirmation.
+2024-03-15 14:30:22  ERROR     [ERR] GET https://...: 404 Not Found
+```
+
+### Log levels
+
+| Level | What you see |
+|---|---|
+| `ERROR` | Only errors and fatal messages |
+| `WARNING` | Errors + warnings (e.g. require_allow prompt) |
+| `INFO` | Normal run output — targets, plan, OK/SKIP/SNAPSHOT lines *(default)* |
+| `DEBUG` | Everything above + each HTTP verb/URL + per-route detail |
+
+### CLI flags
+
+```bash
+# Change log level
+python cribl-pusher.py --workspace dev --log-level DEBUG --from-file
+
+# Write logs to a file (in addition to the console)
+python cribl-pusher.py --workspace prod --log-file audit.log --from-file --yes
+
+# Combine both
+python cribl-pusher.py --workspace qa --log-level DEBUG --log-file debug.log --dry-run --from-file
+```
+
+### Log file location
+
+The `--log-file` path is relative to wherever you run the script from. Logs are **appended**, so the file grows across runs — useful for a permanent audit trail.
+
+> `*.log` files are in `.gitignore` and will not be committed.
+
+---
+
 ## Safety Features
 
 The script has several guards that prevent accidental data loss:
@@ -400,17 +445,27 @@ If something went wrong after a successful PATCH, find the snapshot file printed
 [SNAPSHOT] Saved rollback snapshot: cribl_snapshots/prod/routes_default_snapshot_20240315T143022Z.json
 ```
 
-To restore, send that file back to Cribl:
+To restore, send that file back to Cribl using the exact `routes_url` printed in the `=== TARGET ===` banner when the script ran:
 
 ```bash
 curl -k -X PATCH \
-  "https://YOUR_CRIBL_HOST:9000/api/v1/m/prod/routes/default" \
+  "https://YOUR_CRIBL_HOST:9000/api/v1/m/{worker_group}/routes/{routes_table}" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @cribl_snapshots/{workspace}/routes_default_snapshot_20240315T143022Z.json
+```
+
+**Example** — workspace `prod`, worker group `prod`, routes table `prod`:
+
+```bash
+curl -k -X PATCH \
+  "https://YOUR_CRIBL_HOST:9000/api/v1/m/prod/routes/prod" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d @cribl_snapshots/prod/routes_default_snapshot_20240315T143022Z.json
 ```
 
-Replace `prod` with your worker group name and update the URL and token.
+The exact URL is always shown in the `routes_url` line of the `=== TARGET ===` banner — copy it from there to be sure.
 
 ---
 

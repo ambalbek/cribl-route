@@ -7,6 +7,7 @@ Usage examples:
   python cribl-pusher.py --workspace dev --appid APP1 --appname "My App"
   python cribl-pusher.py --workspace prod --allow-prod --from-file --appfile appids.txt --yes
   python cribl-pusher.py --workspace qa --dry-run --from-file
+  python cribl-pusher.py --workspace dev --log-level DEBUG --log-file run.log --dry-run --from-file
 """
 import os
 import json
@@ -14,6 +15,7 @@ import copy
 import argparse
 from pathlib import Path
 
+from cribl_logger import setup_logging, get_logger
 from cribl_utils import (
     die, short_id, now_stamp, pretty_json, unified_diff,
     read_json, read_apps_from_file,
@@ -84,11 +86,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--snapshot-dir", default="",
                    help="Override config snapshot_dir")
 
+    # Logging
+    p.add_argument("--log-level", default="INFO",
+                   choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+                   help="Log verbosity (default: INFO)")
+    p.add_argument("--log-file", default="",
+                   help="Optional path to write logs to a file (appended)")
+
     return p
 
 
 def main():
     args = build_parser().parse_args()
+
+    # ── Logging — set up first so every subsequent call can use the logger ────
+    log = setup_logging(args.log_level, args.log_file)
 
     # ── Config ────────────────────────────────────────────────────────────────
     config = load_config(args.config)
@@ -103,7 +115,7 @@ def main():
     workspace_cfg = get_workspace(config, args.workspace)
 
     if workspace_cfg.get("require_allow") and not args.allow_prod:
-        print(f"\n[WARN] Workspace '{args.workspace}' requires explicit confirmation.")
+        log.warning(f"Workspace '{args.workspace}' requires explicit confirmation.")
         answer = prompt_text('Type "ALLOW" to proceed (anything else aborts)', "")
         if answer.strip() != "ALLOW":
             die("Refusing to run: ALLOW not confirmed.")
@@ -149,7 +161,6 @@ def main():
         mode_desc = f"bulk({len(apps)})"
 
     # ── Resolve settings (CLI > workspace > global config) ───────────────────
-    # skip_ssl: --skip-ssl flag wins, then workspace-level, then global config
     skip_ssl   = args.skip_ssl or workspace_cfg.get("skip_ssl", config.get("skip_ssl", False))
     min_routes = (args.min_existing_total_routes
                   if args.min_existing_total_routes is not None
@@ -169,8 +180,8 @@ def main():
     if not dest_tmpl_path:
         die(f"[ERR] No dest_template defined for workspace '{args.workspace}'")
 
-    route_template = read_json(route_tmpl_path)
-    dest_template  = read_json(dest_tmpl_path)
+    route_template    = read_json(route_tmpl_path)
+    dest_template     = read_json(dest_tmpl_path)
     fallback_pipeline = route_template.get("pipeline") or "passthru"
 
     # ── Session + auth ────────────────────────────────────────────────────────
@@ -186,37 +197,44 @@ def main():
         }
 
     def GET(url):
+        log.debug(f"GET  {url}")
         return session.get(url, headers=H(), timeout=60)
 
     def POST(url, payload):
+        log.debug(f"POST {url}")
         return session.post(url, headers=H(), json=payload, timeout=60)
 
     def PATCH(url, payload):
+        log.debug(f"PATCH {url}")
         return session.patch(url, headers=H(), json=payload, timeout=60)
 
-    outputs_url = f"{api_base}/system/outputs"
-    routes_url  = f"{api_base}/routes/default"
-    group_id    = (args.group_id or "").strip() or None
+    outputs_url  = f"{api_base}/system/outputs"
+    routes_table = workspace_cfg.get("routes_table", workspace_cfg["worker_group"])
+    routes_url   = f"{api_base}/routes/{routes_table}"
+    group_id     = (args.group_id or "").strip() or None
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    print("\n=== TARGET ===")
-    print(f"workspace    : {args.workspace}  ({workspace_cfg.get('description', '')})")
-    print(f"worker_group : {workspace_cfg['worker_group']}")
-    print(f"api_base     : {api_base}")
-    print(f"mode         : {mode_desc}")
-    print(f"apps         : {len(apps)}")
-    print(f"group-id     : {group_id or '(none)'}")
-    print(f"dry-run      : {args.dry_run}")
-    print(f"skip-ssl     : {skip_ssl}")
+    log.info("=== TARGET ===")
+    log.info(f"workspace    : {args.workspace}  ({workspace_cfg.get('description', '')})")
+    log.info(f"worker_group : {workspace_cfg['worker_group']}")
+    log.info(f"api_base     : {api_base}")
+    log.info(f"routes_url   : {routes_url}")
+    log.info(f"mode         : {mode_desc}")
+    log.info(f"apps         : {len(apps)}")
+    log.info(f"group-id     : {group_id or '(none)'}")
+    log.info(f"dry-run      : {args.dry_run}")
+    log.info(f"skip-ssl     : {skip_ssl}")
+    if args.log_file:
+        log.info(f"log-file     : {args.log_file}")
 
     # ── 1) GET current routes ─────────────────────────────────────────────────
     rget = GET(routes_url)
     if rget.status_code != 200:
-        die(f"[ERR] GET routes/default: {rget.status_code} {rget.text}")
+        die(f"[ERR] GET {routes_url}: {rget.status_code} {rget.text}")
 
     current_obj  = rget.json()
     total_before = count_all_routes(current_obj)
-    print(f"[INFO] Loaded total routes (all groups): {total_before}")
+    log.info(f"Loaded total routes (all groups): {total_before}")
 
     if total_before < min_routes:
         die(f"[SAFETY] Refusing to PATCH: total_before={total_before} < min={min_routes}")
@@ -231,6 +249,7 @@ def main():
                     f"Use --create-missing-group to create it."
                 )
             create_group_if_missing(current_obj, group_id, args.group_name.strip() or None)
+            log.info(f"Created missing group '{group_id}'")
             tgt, tgt_key, _ = get_routes_target(current_obj, group_id)
             if tgt is None:
                 die(f"[ERR] Failed to create/locate group '{group_id}' after creation")
@@ -247,6 +266,8 @@ def main():
     existing_names   = {r.get("name") for r in existing_routes if isinstance(r, dict) and r.get("name")}
     existing_filters = {r.get("filter") for r in existing_routes if isinstance(r, dict) and r.get("filter")}
 
+    log.debug(f"Insertion point (before catch-all): index {default_idx} of {len(existing_routes)}")
+
     new_routes = []
     for appid, appname in apps:
         route           = copy.deepcopy(route_template)
@@ -257,12 +278,13 @@ def main():
         route           = normalize_route(route, fallback_pipeline)
 
         if route["name"] in existing_names or route["filter"] in existing_filters:
-            print(f"[SKIP] route already exists for {appid}")
+            log.info(f"[SKIP] route already exists for {appid}")
             continue
 
         new_routes.append(route)
         existing_names.add(route["name"])
         existing_filters.add(route["filter"])
+        log.debug(f"Queued new route: {route['name']}")
 
     updated_routes = existing_routes[:default_idx] + new_routes + existing_routes[default_idx:]
     target_container[routes_key] = updated_routes
@@ -272,41 +294,41 @@ def main():
     after_text  = pretty_json(patch_obj)
     diff        = unified_diff(
         before_text, after_text,
-        "routes_default_before.json", "routes_default_after.json",
+        "routes_before.json", "routes_after.json",
         n=diff_lines,
     )
     total_after = count_all_routes(patch_obj)
 
-    print("\n=== ROUTE PLAN ===")
-    print(f"target scope      : {'group:' + group_id if group_id else 'top-level routes'}")
-    print(f"existing in scope : {len(existing_routes)}")
-    print(f"new routes        : {len(new_routes)}")
-    print(f"final in scope    : {len(updated_routes)}")
-    print(f"total routes all  : {total_before} -> {total_after}")
+    log.info("=== ROUTE PLAN ===")
+    log.info(f"target scope      : {'group:' + group_id if group_id else 'top-level routes'}")
+    log.info(f"existing in scope : {len(existing_routes)}")
+    log.info(f"new routes        : {len(new_routes)}")
+    log.info(f"final in scope    : {len(updated_routes)}")
+    log.info(f"total routes all  : {total_before} -> {total_after}")
 
     if total_after < total_before:
         die(f"[SAFETY] Refusing to PATCH: total_after ({total_after}) < total_before ({total_before})")
 
     if diff.strip():
-        print("\n--- FULL OBJECT DIFF (preview) ---")
-        print(diff)
+        log.info("--- FULL OBJECT DIFF (preview) ---")
+        log.info(diff)
     else:
-        print("[INFO] No route changes detected.")
+        log.info("No route changes detected.")
 
     # ── 4) Confirmation ───────────────────────────────────────────────────────
     confirm_or_exit("\nProceed to APPLY these changes?", args.yes)
 
     if args.dry_run:
-        print("\n[DRY RUN] No API writes performed.")
+        log.info("[DRY RUN] No API writes performed.")
         return
 
     # ── 5) Snapshot for rollback ──────────────────────────────────────────────
     snap_dir  = Path(snapshot_dir) / args.workspace
     snap_dir.mkdir(parents=True, exist_ok=True)
-    snap_file = snap_dir / f"routes_default_snapshot_{now_stamp()}.json"
+    snap_file = snap_dir / f"routes_snapshot_{now_stamp()}.json"
     with open(snap_file, "w", encoding="utf-8") as f:
         json.dump(current_obj, f, indent=2)
-    print(f"[SNAPSHOT] Saved rollback snapshot: {snap_file}")
+    log.info(f"[SNAPSHOT] {snap_file}")
 
     # ── 6) Upsert destinations ────────────────────────────────────────────────
     for appid, appname in apps:
@@ -320,23 +342,23 @@ def main():
 
         rp = POST(outputs_url, dest)
         if rp.status_code in (200, 201):
-            print(f"[OK] Created destination {dest_id}")
+            log.info(f"[OK] Created destination {dest_id}")
         elif rp.status_code in (400, 409):
             rpu = PATCH(f"{outputs_url}/{dest_id}", dest)
             if rpu.status_code in (200, 204):
-                print(f"[OK] Updated destination {dest_id}")
+                log.info(f"[OK] Updated destination {dest_id}")
             else:
                 die(f"[ERR] Update destination {dest_id}: {rpu.status_code} {rpu.text}")
         else:
             die(f"[ERR] Create destination {dest_id}: {rp.status_code} {rp.text}")
 
-    # ── 7) PATCH routes/default ───────────────────────────────────────────────
+    # ── 7) PATCH routes ───────────────────────────────────────────────────────
     rpatch = PATCH(routes_url, patch_obj)
     if rpatch.status_code in (200, 204):
-        print(f"[OK] PATCH routes/default — added {len(new_routes)} new routes.")
-        print(f"[ROLLBACK] Restore snapshot: {snap_file}")
+        log.info(f"[OK] PATCH {routes_url} -- added {len(new_routes)} new routes.")
+        log.info(f"[ROLLBACK] Restore snapshot: {snap_file}")
     else:
-        die(f"[ERR] PATCH routes/default: {rpatch.status_code} {rpatch.text}")
+        die(f"[ERR] PATCH {routes_url}: {rpatch.status_code} {rpatch.text}")
 
 
 if __name__ == "__main__":

@@ -34,5 +34,5 @@ ENV/
 Thumbs.db
 desktop.ini
 
-# Logs
+# Log files (--log-file output)
 *.log

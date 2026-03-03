@@ -2,6 +2,7 @@
 import sys
 import json
 import uuid
+import logging
 import datetime as dt
 import difflib
 import getpass
@@ -19,7 +20,12 @@ def now_stamp() -> str:
 
 
 def die(msg: str, code: int = 1):
-    print(msg, file=sys.stderr)
+    """Log msg as ERROR then exit. Falls back to stderr if logger not set up yet."""
+    logger = logging.getLogger("cribl")
+    if logger.hasHandlers():
+        logger.error(msg)
+    else:
+        print(msg, file=sys.stderr)
     raise SystemExit(code)
 
 

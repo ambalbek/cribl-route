@@ -37,6 +37,7 @@
 
   "_workspace_options_reference": {
     "_comment": "Optional fields you can add to any workspace entry:",
+    "routes_table": "route table name used in GET/PATCH /routes/{routes_table} — defaults to the worker_group name",
     "skip_ssl": "true/false — overrides global skip_ssl for this workspace only",
     "require_allow": "true — forces the user to type ALLOW before any writes",
     "route_template": "path to a custom route template JSON for this workspace",

@@ -1,0 +1,45 @@
+{
+  "_comment": "Copy this file to config.json and fill in your values. config.json is gitignored.",
+
+  "base_url": "https://YOUR_CRIBL_HOST:9000",
+  "skip_ssl": false,
+
+  "credentials": {
+    "_comment": "Use token OR username+password. Token takes priority if both are set. Leave fields blank to be prompted at runtime.",
+    "token": "",
+    "username": "",
+    "password": ""
+  },
+
+  "route_template": "route_template.json",
+  "snapshot_dir": "cribl_snapshots",
+  "min_existing_total_routes": 1,
+  "diff_lines": 3,
+
+  "workspaces": {
+    "dev": {
+      "worker_group": "dev",
+      "dest_template": "blob_dest_template_dev.json",
+      "description": "Development workspace"
+    },
+    "qa": {
+      "worker_group": "qa",
+      "dest_template": "blob_dest_template_qa.json",
+      "description": "QA workspace"
+    },
+    "prod": {
+      "worker_group": "prod",
+      "dest_template": "blob_dest_template_prod.json",
+      "description": "Production workspace",
+      "require_allow": true
+    }
+  },
+
+  "_workspace_options_reference": {
+    "_comment": "Optional fields you can add to any workspace entry:",
+    "skip_ssl": "true/false — overrides global skip_ssl for this workspace only",
+    "require_allow": "true — forces the user to type ALLOW before any writes",
+    "route_template": "path to a custom route template JSON for this workspace",
+    "description": "human-readable label shown in the TARGET banner"
+  }
+}

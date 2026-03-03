@@ -286,12 +286,12 @@ assert skipped_sim   == ["APP001"]
 assert new_routes_sim == ["APP002"]
 ok("APP001 route correctly identified as existing -> skipped, APP002 as new")
 
-# Simulate destination POST: 400/409 always skips, no update attempted
+# Simulate destination POST: any 4xx skips, no update attempted
 def _simulate_dest_upsert(post_status):
     """Returns action taken: 'created' or 'skipped' or 'error'"""
     if post_status in (200, 201):
         return "created"
-    elif post_status in (400, 409):
+    elif 400 <= post_status < 500:
         return "skipped"
     else:
         return "error"
@@ -299,14 +299,17 @@ def _simulate_dest_upsert(post_status):
 assert _simulate_dest_upsert(201) == "created"
 ok("dest POST 201 -> created")
 
-assert _simulate_dest_upsert(409) == "skipped"
-ok("dest POST 409 -> skipped (no update attempted)")
-
 assert _simulate_dest_upsert(400) == "skipped"
-ok("dest POST 400 -> skipped (no update attempted)")
+ok("dest POST 400 -> skipped")
+
+assert _simulate_dest_upsert(409) == "skipped"
+ok("dest POST 409 -> skipped")
+
+assert _simulate_dest_upsert(422) == "skipped"
+ok("dest POST 422 -> skipped (Cribl 'already exists' variant)")
 
 assert _simulate_dest_upsert(500) == "error"
-ok("dest POST 500 -> error")
+ok("dest POST 500 -> error (5xx still fatal)")
 
 # ── Logger module ─────────────────────────────────────────────────────────────
 section("13. LOGGER MODULE")

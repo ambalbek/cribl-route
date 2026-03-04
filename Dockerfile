@@ -11,7 +11,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && find /usr/local/lib -type d -name "tests"     -exec rm -rf {} + 2>/dev/null; true \
     && find /usr/local/lib -type d -name "test"      -exec rm -rf {} + 2>/dev/null; true \
-    && find /usr/local/lib -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null; true \
     && find /usr/local/lib -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null; true
 
 # Copy application code

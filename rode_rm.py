@@ -321,8 +321,8 @@ def push_cribl(appid, appname, workspace_name, args, log):
     route = copy.deepcopy(route_template)
     route["id"]     = appid
     route["filter"] = f'apmId == "{appid}"'
-    route["output"] = f"hcsc-blob-storage-northcentralus-{appid}"
-    route["name"]   = f"hcsc-blob-storage-route-{appid}"
+    route["output"] = f"abcd-blob-storage-northcentralus-{appid}"
+    route["name"]   = f"abcd-blob-storage-route-{appid}"
     route           = normalize_route(route, fallback_pipeline)
 
     if route["name"] in existing_names or route["filter"] in existing_filters:
@@ -361,7 +361,7 @@ def push_cribl(appid, appname, workspace_name, args, log):
         json.dump(current_obj, f, indent=2)
     log.info(f"  [SNAPSHOT] {snap_file}")
 
-    dest_id = f"hcsc-blob-storage-northcentralus-{appid}"
+    dest_id = f"abcd-blob-storage-northcentralus-{appid}"
     if dest_id in existing_dest_ids:
         log.info(f"  [SKIP] Destination already exists: {dest_id}")
     else:
@@ -434,10 +434,10 @@ def main():
     apmid    = args.apmid
 
     configurations = [
-        {"region": "onshore",  "environment": "test",  "domain": "adhcsctst", "roles": ["watcher_user"]},
-        {"region": "offshore", "environment": "test",  "domain": "adhcsctst", "roles": ["watcher_user"]},
-        {"region": "onshore",  "environment": "prod",  "domain": "adhcscint", "roles": ["watcher_admin"]},
-        {"region": "offshore", "environment": "prod",  "domain": "adhcscint", "roles": ["watcher_admin"]}
+        {"region": "onshore",  "environment": "test",  "domain": "adabcdtst", "roles": ["watcher_user"]},
+        {"region": "offshore", "environment": "test",  "domain": "adabcdtst", "roles": ["watcher_user"]},
+        {"region": "onshore",  "environment": "prod",  "domain": "adabcdint", "roles": ["watcher_admin"]},
+        {"region": "offshore", "environment": "prod",  "domain": "adabcdint", "roles": ["watcher_admin"]}
     ]
 
     # validate

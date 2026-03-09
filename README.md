@@ -562,7 +562,7 @@ All output goes through Python's `logging` module via the shared `"cribl"` logge
 ```
 2024-03-15 14:30:22  INFO      === TARGET ===
 2024-03-15 14:30:22  INFO      workspace    : dev
-2024-03-15 14:30:22  INFO      [OK] Created destination hcsc-blob-storage-northcentralus-APP001
+2024-03-15 14:30:22  INFO      [OK] Created destination abcd-blob-storage-northcentralus-APP001
 2024-03-15 14:30:22  WARNING   Workspace 'prod' requires explicit confirmation.
 2024-03-15 14:30:22  ERROR     [ERR] GET https://...: 404 Not Found
 ```

@@ -300,8 +300,8 @@ def main():
     for appid, appname in apps:
         route["id"]     = appid
         route["filter"] = f'apmId == "{appid}"'
-        route["output"] = f"hcsc-blob-storage-northcentralus-{appid}"
-        route["name"]   = f"hcsc-blob-storage-route-{appid}"
+        route["output"] = f"abcd-blob-storage-northcentralus-{appid}"
+        route["name"]   = f"abcd-blob-storage-route-{appid}"
         route           = normalize_route(route, fallback_pipeline)
 
         if route["name"] in existing_names or route["filter"] in existing_filters:
@@ -361,7 +361,7 @@ def main():
 
     # ── 6) Create destinations ────────────────────────────────────────────────
     for appid, appname in apps:
-        dest_id = f"hcsc-blob-storage-northcentralus-{appid}"
+        dest_id = f"abcd-blob-storage-northcentralus-{appid}"
 
         if dest_id in existing_dest_ids:
             log.info(f"[SKIP] Destination already exists: {dest_id} — skipping")

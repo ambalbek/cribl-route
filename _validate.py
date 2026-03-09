@@ -214,15 +214,15 @@ ok(f"insertion order correct: {ids}")
 # ── Duplicate skip ────────────────────────────────────────────────────────────
 section("10. DUPLICATE SKIP LOGIC")
 
-existing_names   = {"hcsc-blob-storage-route-APP001"}
+existing_names   = {"abcd-blob-storage-route-APP001"}
 existing_filters = {'apmId == "APP001"'}
 
-name1 = "hcsc-blob-storage-route-APP001"
+name1 = "abcd-blob-storage-route-APP001"
 filt1 = 'apmId == "APP001"'
 assert name1 in existing_names or filt1 in existing_filters
 ok("APP001 duplicate correctly detected via name")
 
-name2 = "hcsc-blob-storage-route-APP002"
+name2 = "abcd-blob-storage-route-APP002"
 filt2 = 'apmId == "APP002"'
 assert not (name2 in existing_names or filt2 in existing_filters)
 ok("APP002 new app correctly not detected as duplicate")
@@ -268,14 +268,14 @@ except Exception as e:
 section("13. SKIP LOGIC")
 
 # Simulate: APP001 route already exists, APP002 is new
-existing_names_sim   = {"hcsc-blob-storage-route-APP001"}
+existing_names_sim   = {"abcd-blob-storage-route-APP001"}
 existing_filters_sim = {'apmId == "APP001"'}
 
 new_routes_sim  = []
 skipped_sim     = []
 
 for appid in ("APP001", "APP002"):
-    route_name   = f"hcsc-blob-storage-route-{appid}"
+    route_name   = f"abcd-blob-storage-route-{appid}"
     route_filter = f'apmId == "{appid}"'
     if route_name in existing_names_sim or route_filter in existing_filters_sim:
         skipped_sim.append(appid)

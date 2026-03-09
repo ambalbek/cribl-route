@@ -2,6 +2,8 @@
 
 Automates adding **routes** and upserting **destinations** (blob storage outputs) across Cribl workspaces. Supports single-app and bulk-file modes with a full diff preview, safety guards, and automatic rollback snapshots before every write.
 
+Also includes **`rode_rm.py`** — a companion script that pushes **ELK roles + role-mappings** and **Cribl routes/destinations** together in a single run, with configurable ordering and per-side skip flags.
+
 ---
 
 ## Table of Contents
@@ -14,12 +16,13 @@ Automates adding **routes** and upserting **destinations** (blob storage outputs
 6. [Template Files](#template-files)
 7. [App Input Format](#app-input-format)
 8. [Running the Script](#running-the-script)
-9. [Docker](#docker)
-10. [All CLI Flags](#all-cli-flags)
-11. [Logging](#logging)
-12. [Safety Features](#safety-features)
-13. [Rolling Back a Change](#rolling-back-a-change)
-14. [Troubleshooting](#troubleshooting)
+9. [rode_rm.py — ELK Roles + Cribl](#rode_rmpy--elk-roles--cribl)
+10. [Docker](#docker)
+11. [All CLI Flags](#all-cli-flags)
+12. [Logging](#logging)
+13. [Safety Features](#safety-features)
+14. [Rolling Back a Change](#rolling-back-a-change)
+15. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -69,7 +72,8 @@ python --version
 cribl-rout/
 │
 ├── cribl-pusher.py              # CLI entry point — run this
-├── ui.py                        # Streamlit web UI — run with: streamlit run ui.py
+├── rode_rm.py                   # Companion CLI — pushes ELK roles + Cribl routes together
+├── ui.py                        # Streamlit web UI (two tabs) — run with: streamlit run ui.py
 ├── cribl_api.py                 # Cribl API + route logic
 ├── cribl_config.py              # Config loading and workspace resolution
 ├── cribl_utils.py               # Shared utilities (I/O, prompts, HTTP session)
@@ -289,7 +293,12 @@ See the full [Docker](#docker) section below for build, run, and transfer instru
 streamlit run ui.py
 ```
 
-Opens `http://localhost:8501` in your browser. Select a workspace from the dropdown, fill in the app details or upload a bulk file, and click **Run cribl-pusher**. Output appears on the right panel. No terminal interaction needed.
+Opens `http://localhost:8501` in your browser. The UI has two tabs:
+
+- **Cribl Pusher** — select a workspace, fill in app details or upload a bulk file, click **Run cribl-pusher**. Output appears on the right panel.
+- **ELK Roles + Cribl** — enter app name, APM ID, ELK connection details, and choose a Cribl workspace. Optionally skip either side or set the execution order. Click **Run rode_rm**. Output appears on the right panel.
+
+No terminal interaction needed for either tab.
 
 ---
 
@@ -377,6 +386,55 @@ python cribl-pusher.py \
   --group-name "My New Group" \
   --from-file
 ```
+
+---
+
+## rode_rm.py — ELK Roles + Cribl
+
+`rode_rm.py` is a companion script that applies **ELK roles/role-mappings** and **Cribl routes/destinations** in a single command. Both sides can be run together or independently.
+
+### What it does
+
+1. (ELK side) Pushes role and role-mapping definitions to an Elasticsearch/OpenSearch cluster via its REST API.
+2. (Cribl side) Runs the same route + destination upsert logic as `cribl-pusher.py` for the chosen workspace.
+3. Runs the two sides in the configured order (ELK first by default).
+
+### Basic usage
+
+```bash
+python rode_rm.py \
+  --app_name "My Application" \
+  --apmid    "APM-12345" \
+  --elk-url  "https://elk.company.com:9200" \
+  --elk-user elastic \
+  --elk-password secret \
+  --workspace dev \
+  --dry-run
+```
+
+### CLI flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--app_name` | *(required)* | Application name |
+| `--apmid` | *(required)* | APM identifier |
+| `--elk-url` | *(required unless --skip-elk)* | ELK/OpenSearch base URL |
+| `--elk-user` | `""` | ELK username |
+| `--elk-password` | `""` | ELK password |
+| `--elk-token` | `""` | ELK bearer token (overrides user/password) |
+| `--workspace` | *(required unless --skip-cribl)* | Cribl workspace name (matches config.json) |
+| `--allow-prod` | false | Skip the ALLOW prompt for protected workspaces |
+| `--order` | `elk` | Execution order: `elk` (ELK first) or `cribl` (Cribl first) |
+| `--skip-elk` | false | Skip the ELK side entirely |
+| `--skip-cribl` | false | Skip the Cribl side entirely |
+| `--dry-run` | false | Preview only — no writes on either side |
+| `--skip-ssl` | false | Disable SSL verification for all connections |
+| `--log-level` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `--yes` | false | Skip the final confirmation prompt |
+
+### Using the web UI
+
+Open the **ELK Roles + Cribl** tab in `ui.py`. All flags above are exposed as form fields. Sensitive values (ELK password, ELK token) are masked in the command preview.
 
 ---
 

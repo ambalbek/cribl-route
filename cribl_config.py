@@ -38,11 +38,19 @@ def build_workspace_urls(config: dict, workspace_cfg: dict) -> tuple[str, str]:
     root_url     — used for /api/v1/auth/login
     api_base_url — used for all other API calls, scoped to the worker group:
                    {base_url}/api/v1/m/{worker_group}
+
+    Workspace-level base_url overrides the global one, allowing different
+    workspaces to point to different Cribl clusters.
     """
-    root_url = config["base_url"].rstrip("/")
+    root_url = workspace_cfg.get("base_url", config.get("base_url", "")).rstrip("/")
     worker_group = workspace_cfg["worker_group"]
     api_base = f"{root_url}/api/v1/m/{worker_group}"
     return root_url, api_base
+
+
+def get_workspace_url(config: dict, workspace_cfg: dict) -> str:
+    """Returns the effective base_url for a workspace (for display purposes)."""
+    return workspace_cfg.get("base_url", config.get("base_url", "")).rstrip("/")
 
 
 def resolve_credentials(config: dict, args) -> tuple[str, str, str]:

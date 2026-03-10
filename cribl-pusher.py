@@ -15,7 +15,7 @@ import copy
 import argparse
 from pathlib import Path
 
-from cribl_logger import setup_logging, get_logger
+from cribl_logger import setup_logging
 from cribl_utils import (
     die, short_id, now_stamp, pretty_json, unified_diff,
     read_json, read_apps_from_file,
@@ -43,6 +43,8 @@ def build_parser() -> argparse.ArgumentParser:
     # Config
     p.add_argument("--config", default="config.json",
                    help="Path to config file (default: config.json)")
+    p.add_argument("--cribl-url", default="",
+                   help="Cribl base URL override (overrides config base_url and workspace base_url)")
 
     # Workspace
     p.add_argument("--workspace",
@@ -173,6 +175,9 @@ def main():
 
     # ── URLs ──────────────────────────────────────────────────────────────────
     root_url, api_base = build_workspace_urls(config, workspace_cfg)
+    if args.cribl_url.strip():
+        root_url = args.cribl_url.rstrip("/")
+        api_base = f"{root_url}/api/v1/m/{workspace_cfg['worker_group']}"
 
     # ── Templates ─────────────────────────────────────────────────────────────
     route_tmpl_path = (workspace_cfg.get("route_template")
@@ -298,6 +303,7 @@ def main():
 
     new_routes = []
     for appid, appname in apps:
+        route           = copy.deepcopy(route_template)
         route["id"]     = appid
         route["filter"] = f'apmId == "{appid}"'
         route["output"] = f"abcd-blob-storage-northcentralus-{appid}"

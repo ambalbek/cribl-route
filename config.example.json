@@ -2,6 +2,14 @@
   "_comment": "Copy this file to config.json and fill in your values. config.json is gitignored.",
 
   "base_url": "https://YOUR_CRIBL_HOST:9000",
+  "cribl_urls": [
+    "https://cribl-azn.example.com:9000",
+    "https://cribl-azs.example.com:9000"
+  ],
+  "elk_urls": [
+    "https://elk-azn.example.com:9200",
+    "https://elk-azs.example.com:9200"
+  ],
   "skip_ssl": true,
 
   "credentials": {
@@ -17,26 +25,37 @@
   "diff_lines": 3,
 
   "workspaces": {
-    "dev": {
+    "azn-dev": {
+      "base_url": "https://cribl-azn.example.com:9000",
       "worker_group": "dev",
       "dest_template": "blob_dest_template_dev.json",
-      "description": "Development workspace"
+      "description": "Azure North — Dev"
     },
-    "qa": {
-      "worker_group": "qa",
-      "dest_template": "blob_dest_template_qa.json",
-      "description": "QA workspace"
+    "azs-dev": {
+      "base_url": "https://cribl-azs.example.com:9000",
+      "worker_group": "dev",
+      "dest_template": "blob_dest_template_dev.json",
+      "description": "Azure South — Dev"
     },
-    "prod": {
+    "azn-prod": {
+      "base_url": "https://cribl-azn.example.com:9000",
       "worker_group": "prod",
       "dest_template": "blob_dest_template_prod.json",
-      "description": "Production workspace",
+      "description": "Azure North — Prod",
+      "require_allow": true
+    },
+    "azs-prod": {
+      "base_url": "https://cribl-azs.example.com:9000",
+      "worker_group": "prod",
+      "dest_template": "blob_dest_template_prod.json",
+      "description": "Azure South — Prod",
       "require_allow": true
     }
   },
 
   "_workspace_options_reference": {
     "_comment": "Optional fields you can add to any workspace entry:",
+    "base_url": "overrides the global base_url for this workspace — use this to point to a different Cribl cluster",
     "routes_table": "route table name used in GET/PATCH /routes/{routes_table} — defaults to the worker_group name",
     "skip_ssl": "true/false — overrides global skip_ssl for this workspace only",
     "require_allow": "true — forces the user to type ALLOW before any writes",

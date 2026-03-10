@@ -17,12 +17,13 @@ Also includes **`rode_rm.py`** — a companion script that pushes **ELK roles + 
 7. [App Input Format](#app-input-format)
 8. [Running the Script](#running-the-script)
 9. [rode_rm.py — ELK Roles + Cribl](#rode_rmpy--elk-roles--cribl)
-10. [Docker](#docker)
-11. [All CLI Flags](#all-cli-flags)
-12. [Logging](#logging)
-13. [Safety Features](#safety-features)
-14. [Rolling Back a Change](#rolling-back-a-change)
-15. [Troubleshooting](#troubleshooting)
+10. [Web UI](#web-ui)
+11. [Docker](#docker)
+12. [All CLI Flags](#all-cli-flags)
+13. [Logging](#logging)
+14. [Safety Features](#safety-features)
+15. [Rolling Back a Change](#rolling-back-a-change)
+16. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -39,7 +40,7 @@ For each application you provide (by ID and name), the script:
 7. Creates any destination that does not already exist (`POST /system/outputs`) — skips if present
 8. Patches the route table back to Cribl (`PATCH /api/v1/m/{worker_group}/routes/{routes_table}`)
 
-Everything targets a **single Cribl URL** with multiple named **workspaces** (worker groups), configured in `config.json`.
+Each workspace can point to a **different Cribl cluster** via an optional per-workspace `base_url`, or you can override the URL at runtime with `--cribl-url`.
 
 ---
 
@@ -51,10 +52,10 @@ Everything targets a **single Cribl URL** with multiple named **workspaces** (wo
 
 ```bash
 # CLI only
-pip install requests urllib3
+pip install requests urllib3 jinja2
 
 # CLI + web UI
-pip install requests urllib3 streamlit
+pip install requests urllib3 jinja2 streamlit
 ```
 
 Verify your Python version:
@@ -77,21 +78,23 @@ cribl-rout/
 ├── cribl_api.py                 # Cribl API + route logic
 ├── cribl_config.py              # Config loading and workspace resolution
 ├── cribl_utils.py               # Shared utilities (I/O, prompts, HTTP session)
-├── cribl_logger.py              # Logging setup (setup_logging, get_logger)
+├── cribl_logger.py              # Logging setup
 │
-├── Dockerfile                   # Container image definition (python:3.13-slim, linux/amd64)
+├── Dockerfile                   # Container image definition
 ├── .dockerignore                # Files excluded from the Docker build context
-├── requirements.txt             # Pip dependencies (requests, urllib3, streamlit)
+├── requirements.txt             # Pip dependencies
 │
 ├── config.json                  # YOUR config (credentials + workspaces) — never commit
 ├── config.example.json          # Safe-to-commit template — copy this to config.json
 │
-├── route_template.json          # Route shape used for every new route
-├── blob_dest_template_dev.json  # Destination shape for the dev workspace
-├── blob_dest_template_qa.json   # Destination shape for the qa workspace
-├── blob_dest_template_prod.json # Destination shape for the prod workspace
+├── route_template.json          # Route shape used for every new route  ← you must create
+├── blob_dest_template_dev.json  # Destination shape for the dev workspace  ← you must create
+├── blob_dest_template_qa.json   # Destination shape for the qa workspace   ← you must create
+├── blob_dest_template_prod.json # Destination shape for the prod workspace ← you must create
 │
 ├── appids.txt                   # (optional) Bulk app list — one "appid,appname" per line
+│
+├── ops_rm_r_templates_output/   # Auto-created by rode_rm.py — ELK template files saved here
 │
 └── cribl_snapshots/             # Auto-created — rollback snapshots saved here
     ├── dev/
@@ -112,7 +115,7 @@ Make sure all `.py` files, template `.json` files, and `config.example.json` are
 ### Step 2 — Install dependencies
 
 ```bash
-pip install requests urllib3
+pip install requests urllib3 jinja2 streamlit
 ```
 
 ### Step 3 — Create your config file
@@ -131,17 +134,27 @@ Open `config.json` in any text editor and fill in:
 
 | Field | What to put |
 |---|---|
-| `base_url` | Your Cribl hostname, e.g. `https://cribl.company.com:9000` |
+| `base_url` | Default Cribl URL, e.g. `https://cribl.company.com:9000` |
+| `cribl_urls` | List of Cribl URLs shown as a dropdown in the UI |
+| `elk_urls` | List of ELK URLs shown as a dropdown in the UI |
 | `credentials.username` | Your Cribl login username |
 | `credentials.password` | Your Cribl login password (or leave blank to type it at runtime) |
 | `credentials.token` | A pre-generated bearer token — if set, username/password are ignored |
 | `workspaces` | One entry per worker group you want to target (see below) |
 
-**Minimal example:**
+**Example with multiple clusters:**
 
 ```json
 {
-  "base_url": "https://cribl.company.com:9000",
+  "base_url": "https://cribl-azn.company.com:9000",
+  "cribl_urls": [
+    "https://cribl-azn.company.com:9000",
+    "https://cribl-azs.company.com:9000"
+  ],
+  "elk_urls": [
+    "https://elk-azn.company.com:9200",
+    "https://elk-azs.company.com:9200"
+  ],
   "skip_ssl": false,
   "credentials": {
     "token": "",
@@ -153,34 +166,66 @@ Open `config.json` in any text editor and fill in:
   "min_existing_total_routes": 1,
   "diff_lines": 3,
   "workspaces": {
-    "dev": {
+    "azn-dev": {
+      "base_url": "https://cribl-azn.company.com:9000",
       "worker_group": "dev",
       "dest_template": "blob_dest_template_dev.json",
-      "description": "Development"
+      "description": "Azure North — Dev"
     },
-    "prod": {
+    "azs-dev": {
+      "base_url": "https://cribl-azs.company.com:9000",
+      "worker_group": "dev",
+      "dest_template": "blob_dest_template_dev.json",
+      "description": "Azure South — Dev"
+    },
+    "azn-prod": {
+      "base_url": "https://cribl-azn.company.com:9000",
       "worker_group": "prod",
       "dest_template": "blob_dest_template_prod.json",
-      "description": "Production",
+      "description": "Azure North — Prod",
       "require_allow": true
     }
   }
 }
 ```
 
-### Step 5 — Verify the templates exist
+### Step 5 — Create the template files
 
-The following files must be present in the same folder as the script:
+The following files must exist in the same folder. Grab the shapes from your live Cribl instance:
 
-- `route_template.json`
-- `blob_dest_template_dev.json`
-- `blob_dest_template_qa.json`
-- `blob_dest_template_prod.json`
+**`route_template.json`** — fetch a route from Cribl and strip out the app-specific fields:
+
+```bash
+curl -k -H "Authorization: Bearer YOUR_TOKEN" \
+  "https://YOUR_CRIBL:9000/api/v1/m/{worker_group}/routes/{routes_table}"
+```
+
+Minimum working example:
+
+```json
+{
+  "pipeline": "passthru",
+  "final": false,
+  "disabled": false,
+  "clones": [],
+  "description": "",
+  "enableOutputExpression": false
+}
+```
+
+**`blob_dest_template_*.json`** — fetch an existing output and strip the app-specific fields:
+
+```bash
+curl -k -H "Authorization: Bearer YOUR_TOKEN" \
+  "https://YOUR_CRIBL:9000/api/v1/m/{worker_group}/system/outputs/{output_id}"
+```
+
+The script fills in `id`, `name`, `containerName`, and `description` automatically.
 
 ### Step 6 — Do a dry run
 
 ```bash
-python cribl-pusher.py --workspace dev --dry-run --appid TEST001 --appname "Test App"
+python cribl-pusher.py --workspace azn-dev --dry-run --appid TEST001 --appname "Test App"
 ```
 
 You should see the `=== TARGET ===` banner and a diff preview with no errors. **Nothing is written on a dry run.**
@@ -193,26 +238,29 @@ You should see the `=== TARGET ===` banner and a diff preview with no errors. **
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `base_url` | string | — | **Required.** Cribl root URL, e.g. `https://host:9000` |
-| `skip_ssl` | bool | `false` | Disable SSL cert verification globally (equivalent to `curl -k`) |
-| `credentials.token` | string | `""` | Bearer token. If set, skips username/password login |
+| `base_url` | string | — | Default Cribl root URL (overridden per workspace or via `--cribl-url`) |
+| `cribl_urls` | list | `[]` | Cribl URLs shown as a dropdown in the UI Cribl Pusher tab |
+| `elk_urls` | list | `[]` | ELK URLs shown as a dropdown in the UI ELK Roles + Cribl tab |
+| `skip_ssl` | bool | `false` | Disable SSL cert verification globally |
+| `credentials.token` | string | `""` | Bearer token — if set, skips username/password login |
 | `credentials.username` | string | `""` | Login username |
 | `credentials.password` | string | `""` | Login password |
 | `route_template` | string | `route_template.json` | Default route template path |
 | `snapshot_dir` | string | `cribl_snapshots` | Directory where rollback snapshots are saved |
-| `min_existing_total_routes` | int | `1` | Refuse to PATCH if fewer than this many routes are loaded (prevents accidental wipe) |
+| `min_existing_total_routes` | int | `1` | Refuse to PATCH if fewer than this many routes are loaded |
 | `diff_lines` | int | `3` | Lines of context shown in the diff preview |
 
 ### Workspace fields
 
-Each key under `workspaces` is a name you choose (e.g. `"dev"`, `"prod"`).
+Each key under `workspaces` is a name you choose (e.g. `"azn-dev"`, `"azs-prod"`).
 
 | Field | Required | Description |
 |---|---|---|
 | `worker_group` | yes | Cribl worker group name — forms the API path `/api/v1/m/{worker_group}` |
 | `dest_template` | yes | Path to the destination template JSON for this workspace |
-| `routes_table` | no | Route table name in `GET/PATCH /routes/{routes_table}`. Defaults to `worker_group` value (e.g. `"dev"` → `/routes/dev`) |
-| `description` | no | Human-readable label shown in the run banner |
+| `base_url` | no | Overrides the global `base_url` — use this to point a workspace at a different cluster |
+| `routes_table` | no | Route table name in `GET/PATCH /routes/{routes_table}`. Defaults to `worker_group` |
+| `description` | no | Human-readable label shown in the run banner and UI dropdown |
 | `require_allow` | no | If `true`, user must type `ALLOW` before any writes (recommended for prod) |
 | `skip_ssl` | no | Overrides the global `skip_ssl` for this workspace only |
 | `route_template` | no | Overrides the global `route_template` for this workspace only |
@@ -231,20 +279,7 @@ Each key under `workspaces` is a name you choose (e.g. `"dev"`, `"prod"`).
 
 ### route_template.json
 
-Defines the shape of every new route. The script fills in `id`, `filter`, `output`, and `name` for each app automatically.
-
-Minimum working example:
-
-```json
-{
-  "pipeline": "passthru",
-  "final": false,
-  "disabled": false,
-  "clones": [],
-  "description": "",
-  "enableOutputExpression": false
-}
-```
+Defines the shape of every new route. The script fills in `id`, `filter`, `output`, and `name` for each app automatically. All other fields come from this template.
 
 ### blob_dest_template_*.json
 
@@ -281,47 +316,21 @@ Rules:
 
 ## Running the Script
 
-### Option A — Docker (no Python install needed)
-
-See the full [Docker](#docker) section below for build, run, and transfer instructions.
-
----
-
-### Option B — Web UI (local)
+### Option A — Web UI (recommended)
 
 ```bash
 streamlit run ui.py
 ```
 
-Opens `http://localhost:8501` in your browser. The UI has two tabs:
-
-- **Cribl Pusher** — select a workspace, fill in app details or upload a bulk file, click **Run cribl-pusher**. Output appears on the right panel.
-- **ELK Roles + Cribl** — enter app name, APM ID, ELK connection details, and choose a Cribl workspace. Optionally skip either side or set the execution order. Click **Run rode_rm**. Output appears on the right panel.
-
-No terminal interaction needed for either tab.
+Opens `http://localhost:8501`. See the [Web UI](#web-ui) section for details.
 
 ---
 
-### Option C — CLI (fully interactive, recommended for first use)
-
-```bash
-python cribl-pusher.py
-```
-
-The script will prompt you for:
-1. Workspace (numbered list — type a number or the workspace name)
-2. Mode: single app or file
-3. App ID and name (if single mode)
-4. Username/password (if not set in config)
-5. Final YES confirmation before writing
-
----
-
-### Single app, non-interactive (CLI)
+### Option B — CLI (single app)
 
 ```bash
 python cribl-pusher.py \
-  --workspace dev \
+  --workspace azn-dev \
   --appid APP001 \
   --appname "My Application" \
   --yes
@@ -329,11 +338,11 @@ python cribl-pusher.py \
 
 ---
 
-### Bulk mode from file
+### Option C — CLI (bulk file)
 
 ```bash
 python cribl-pusher.py \
-  --workspace qa \
+  --workspace azn-dev \
   --from-file \
   --appfile appids.txt \
   --yes
@@ -343,44 +352,43 @@ python cribl-pusher.py \
 
 ### Dry run (preview only — no writes)
 
-Always safe to run. Shows the full diff but makes zero API calls that modify data.
+```bash
+python cribl-pusher.py --workspace azn-dev --dry-run --from-file --appfile appids.txt
+```
+
+---
+
+### Override the Cribl URL at runtime
 
 ```bash
-python cribl-pusher.py --workspace prod --dry-run --from-file --appfile appids.txt
+python cribl-pusher.py \
+  --cribl-url https://cribl-azs.company.com:9000 \
+  --workspace azs-dev \
+  --appid APP001 --appname "My App" \
+  --yes
 ```
 
 ---
 
 ### Production workspace
 
-Workspaces with `"require_allow": true` in config need an extra confirmation step. Either:
+Workspaces with `"require_allow": true` require an extra flag:
 
 ```bash
-# Interactive — the script will pause and ask you to type ALLOW
-python cribl-pusher.py --workspace prod --from-file --appfile appids.txt
-
-# Non-interactive — pass the flag to skip the ALLOW prompt
-python cribl-pusher.py --workspace prod --allow-prod --from-file --appfile appids.txt --yes
+python cribl-pusher.py \
+  --workspace azn-prod \
+  --allow-prod \
+  --from-file --appfile appids.txt \
+  --yes
 ```
 
 ---
 
 ### Using a route group
 
-If your Cribl routes are organised into named groups:
-
 ```bash
 python cribl-pusher.py \
-  --workspace dev \
-  --group-id my-group-id \
-  --from-file
-```
-
-If the group does not exist yet and you want to create it:
-
-```bash
-python cribl-pusher.py \
-  --workspace dev \
+  --workspace azn-dev \
   --group-id my-group-id \
   --create-missing-group \
   --group-name "My New Group" \
@@ -391,25 +399,57 @@ python cribl-pusher.py \
 
 ## rode_rm.py — ELK Roles + Cribl
 
-`rode_rm.py` is a companion script that applies **ELK roles/role-mappings** and **Cribl routes/destinations** in a single command. Both sides can be run together or independently.
+`rode_rm.py` applies **ELK roles/role-mappings** and **Cribl routes/destinations** in a single command. Both sides can run together or independently.
 
 ### What it does
 
-1. (ELK side) Pushes role and role-mapping definitions to an Elasticsearch/OpenSearch cluster via its REST API.
-2. (Cribl side) Runs the same route + destination upsert logic as `cribl-pusher.py` for the chosen workspace.
-3. Runs the two sides in the configured order (ELK first by default).
+1. Generates ELK role and role-mapping templates (always saved to `ops_rm_r_templates_output/`)
+2. (ELK side) Pushes roles and role-mappings to Elasticsearch via `PUT /_security/role/{name}` and `PUT /_security/role_mapping/{name}`
+3. (Cribl side) Runs the same route + destination upsert logic as `cribl-pusher.py`
+4. Runs the two sides in the configured order (`elk-first` by default)
+
+### Generated ELK templates
+
+Every run saves four files to `ops_rm_r_templates_output/`:
+
+| File | Description |
+|---|---|
+| `roles_{apmid}.json` | Kibana Dev Console format (for human review) |
+| `role_mappings_{apmid}.json` | Kibana Dev Console format (for human review) |
+| `roles_{apmid}_pushable.json` | JSON array with `method`/`path`/`body` — ready to push via API |
+| `role_mappings_{apmid}_pushable.json` | JSON array with `method`/`path`/`body` — ready to push via API |
 
 ### Basic usage
 
 ```bash
 python rode_rm.py \
   --app_name "My Application" \
-  --apmid    "APM-12345" \
+  --apmid    "app00001234" \
   --elk-url  "https://elk.company.com:9200" \
   --elk-user elastic \
   --elk-password secret \
-  --workspace dev \
+  --workspace azn-dev \
   --dry-run
+```
+
+### Generate templates only (no API calls)
+
+```bash
+python rode_rm.py \
+  --app_name "My Application" \
+  --apmid    "app00001234" \
+  --skip-elk \
+  --skip-cribl
+```
+
+### Override the Cribl URL
+
+```bash
+python rode_rm.py \
+  --app_name "My App" --apmid "app00001234" \
+  --elk-url "https://elk.company.com:9200" --elk-user elastic \
+  --cribl-url "https://cribl-azs.company.com:9000" \
+  --workspace azs-dev
 ```
 
 ### CLI flags
@@ -417,30 +457,60 @@ python rode_rm.py \
 | Flag | Default | Description |
 |---|---|---|
 | `--app_name` | *(required)* | Application name |
-| `--apmid` | *(required)* | APM identifier |
+| `--apmid` | *(required)* | App ID (lower-case, e.g. `app00001234`) |
 | `--elk-url` | *(required unless --skip-elk)* | ELK/OpenSearch base URL |
-| `--elk-user` | `""` | ELK username |
+| `--elk-user` | `""` | ELK username (basic auth) |
 | `--elk-password` | `""` | ELK password |
-| `--elk-token` | `""` | ELK bearer token (overrides user/password) |
-| `--workspace` | *(required unless --skip-cribl)* | Cribl workspace name (matches config.json) |
+| `--elk-token` | `""` | ELK API key — overrides user/password |
+| `--cribl-url` | `""` | Cribl base URL override |
+| `--workspace` | *(required unless --skip-cribl)* | Cribl workspace name |
 | `--allow-prod` | false | Skip the ALLOW prompt for protected workspaces |
-| `--order` | `elk` | Execution order: `elk` (ELK first) or `cribl` (Cribl first) |
-| `--skip-elk` | false | Skip the ELK side entirely |
-| `--skip-cribl` | false | Skip the Cribl side entirely |
+| `--order` | `elk-first` | Execution order: `elk-first` or `cribl-first` |
+| `--skip-elk` | false | Skip the ELK side (templates are still saved) |
+| `--skip-cribl` | false | Skip the Cribl side |
 | `--dry-run` | false | Preview only — no writes on either side |
 | `--skip-ssl` | false | Disable SSL verification for all connections |
 | `--log-level` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `--yes` | false | Skip the final confirmation prompt |
+| `--yes` | false | Skip the confirmation prompt |
 
-### Using the web UI
+---
 
-Open the **ELK Roles + Cribl** tab in `ui.py`. All flags above are exposed as form fields. Sensitive values (ELK password, ELK token) are masked in the command preview.
+## Web UI
+
+```bash
+streamlit run ui.py
+```
+
+Opens `http://localhost:8501`. The UI has two tabs:
+
+### Tab 1 — Cribl Pusher
+
+- **Cribl URL** — select from the `cribl_urls` list in config (or type a custom URL if the list is empty)
+- **Workspace** — select from workspaces defined in config
+- **App Input** — single app (App ID + App Name) or bulk file upload
+- **Options** — Dry Run (default: on), Skip SSL, Log Level
+- **Credentials override** — Bearer Token or Username/Password (leave blank to use config.json)
+- **Advanced Options** — Route Group ID, safety overrides, snapshot directory, log file
+
+### Tab 2 — ELK Roles + Cribl
+
+- **App ID + App Name** — used for both ELK role names and Cribl route/destination
+- **ELK URL** — select from the `elk_urls` list in config (or type a custom URL)
+- **ELK credentials** — API token or username/password
+- **Cribl URL** — select from the `cribl_urls` list in config (or type a custom URL)
+- **Workspace** — select from workspaces defined in config
+- **Options** — Dry Run (default: on), Skip SSL, Log Level, Order (ELK first / Cribl first)
+- **Skip sides** — Skip ELK or Skip Cribl independently
+
+> **Dry Run defaults to ON** in both tabs. Uncheck it to perform actual writes.
+
+Sensitive fields (passwords, tokens) are masked in the command preview shown before each run.
 
 ---
 
 ## Docker
 
-The image is built on `python:3.13-slim` (linux/amd64) and contains only the application code. `config.json` and all template JSONs are **never baked in** — they are volume-mounted at runtime so secrets stay off the image.
+The image is built on `python:3.13-slim` (linux/amd64). `config.json` and all template JSONs are **never baked in** — they are volume-mounted at runtime.
 
 ### Build
 
@@ -450,15 +520,12 @@ docker build -t cribl-pusher .
 
 ### Run
 
-Mount your `config.json` and all template files into `/app`:
-
 ```bash
 # Linux / macOS / Git Bash
 docker run -p 8501:8501 \
   -v $(pwd)/config.json:/app/config.json:ro \
   -v $(pwd)/route_template.json:/app/route_template.json:ro \
   -v $(pwd)/blob_dest_template_dev.json:/app/blob_dest_template_dev.json:ro \
-  -v $(pwd)/blob_dest_template_qa.json:/app/blob_dest_template_qa.json:ro \
   -v $(pwd)/blob_dest_template_prod.json:/app/blob_dest_template_prod.json:ro \
   cribl-pusher
 ```
@@ -469,78 +536,50 @@ docker run -p 8501:8501 `
   -v ${PWD}/config.json:/app/config.json:ro `
   -v ${PWD}/route_template.json:/app/route_template.json:ro `
   -v ${PWD}/blob_dest_template_dev.json:/app/blob_dest_template_dev.json:ro `
-  -v ${PWD}/blob_dest_template_qa.json:/app/blob_dest_template_qa.json:ro `
   -v ${PWD}/blob_dest_template_prod.json:/app/blob_dest_template_prod.json:ro `
   cribl-pusher
 ```
 
 Then open `http://localhost:8501`.
 
----
-
 ### Save, Split, and Transfer
 
-Use this to move the image to a machine without internet access or through a system with a file-size limit.
-
-**On the source machine — export and split into 25 MB chunks:**
-
 ```bash
-# Save image to a tar archive
+# Export and split into 25 MB chunks
 docker save cribl-pusher:latest -o cribl-pusher.tar
-
-# Split into 25 MB chunks (produces cribl-pusher.part.aa, .ab, .ac …)
 split -b 25m cribl-pusher.tar cribl-pusher.part.
-
-# Optional — record a checksum for integrity verification
 sha256sum cribl-pusher.tar > cribl-pusher.tar.sha256
 ```
 
-**Transfer** all `cribl-pusher.part.*` files (and optionally `cribl-pusher.tar.sha256`) to the target machine.
-
-**On the target machine — reassemble and load:**
+Transfer all `cribl-pusher.part.*` files to the target machine, then:
 
 ```bash
-# Reassemble chunks back into the tar
 cat cribl-pusher.part.* > cribl-pusher.tar
-
-# Optional — verify integrity
 sha256sum -c cribl-pusher.tar.sha256
-
-# Load into Docker
 docker load -i cribl-pusher.tar
 ```
-
-The image is then available as `cribl-pusher:latest` and can be run with the same `docker run` command above.
-
----
-
-### Image size notes
-
-| Base image | Approx. size |
-|---|---|
-| `python:3.11-slim` (original) | ~500 MB |
-| `python:3.13-slim` (current) | ~380–420 MB |
-
-The reduction comes from switching to Python 3.13 (fewer CVEs, smaller stdlib) and stripping `*.pyc` files, test suites, and `.dist-info` metadata from all installed packages during the build. The remaining size is dominated by Streamlit's compiled dependencies (`pyarrow`, `pandas`, `numpy`) which cannot be reduced further without replacing Streamlit.
 
 ---
 
 ## All CLI Flags
 
+### cribl-pusher.py
+
 | Flag | Default | Description |
 |---|---|---|
 | `--config` | `config.json` | Path to the config file |
+| `--cribl-url` | `""` | Cribl base URL override (overrides config + workspace `base_url`) |
 | `--workspace` | *(prompts)* | Workspace name (must match a key in config `workspaces`) |
 | `--allow-prod` | false | Skip the ALLOW prompt for workspaces with `require_allow: true` |
 | `--token` | `""` | Bearer token override |
 | `--username` | `""` | Username override |
 | `--password` | `""` | Password override |
-| `--skip-ssl` | false | Disable SSL verification for this run |
+| `--skip-ssl` | false | Disable SSL verification |
 | `--dry-run` | false | Preview only — no API writes |
 | `--yes` | false | Skip the final `YES` confirmation prompt |
 | `--appid` | *(prompts)* | Single app ID |
 | `--appname` | *(prompts)* | Single app name (required with `--appid`) |
-| `--from-file` | false | Load apps from a file instead |
+| `--from-file` | false | Load apps from a file |
 | `--appfile` | `appids.txt` | Path to the apps file |
 | `--group-id` | `""` | Insert routes into this route-group ID |
 | `--create-missing-group` | false | Create the group if it doesn't exist |
@@ -548,100 +587,62 @@ The reduction comes from switching to Python 3.13 (fewer CVEs, smaller stdlib) a
 | `--min-existing-total-routes` | *(from config)* | Override the safety minimum route count |
 | `--diff-lines` | *(from config)* | Lines of context in the diff preview |
 | `--snapshot-dir` | *(from config)* | Override the snapshot directory |
-| `--log-level` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `--log-level` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `--log-file` | `""` | Append logs to this file in addition to the console |
 
 ---
 
 ## Logging
 
-All output goes through Python's `logging` module via the shared `"cribl"` logger. Every run prints timestamps and level so logs are easy to search and audit.
-
-### Log format
-
-```
-2024-03-15 14:30:22  INFO      === TARGET ===
-2024-03-15 14:30:22  INFO      workspace    : dev
-2024-03-15 14:30:22  INFO      [OK] Created destination abcd-blob-storage-northcentralus-APP001
-2024-03-15 14:30:22  WARNING   Workspace 'prod' requires explicit confirmation.
-2024-03-15 14:30:22  ERROR     [ERR] GET https://...: 404 Not Found
-```
+All output uses Python's `logging` module via the shared `"cribl"` logger.
 
 ### Log levels
 
 | Level | What you see |
 |---|---|
 | `ERROR` | Only errors and fatal messages |
-| `WARNING` | Errors + warnings (e.g. require_allow prompt) |
+| `WARNING` | Errors + warnings |
 | `INFO` | Normal run output — targets, plan, OK/SKIP/SNAPSHOT lines *(default)* |
 | `DEBUG` | Everything above + each HTTP verb/URL + per-route detail |
 
-### CLI flags
-
 ```bash
-# Change log level
-python cribl-pusher.py --workspace dev --log-level DEBUG --from-file
-
-# Write logs to a file (in addition to the console)
-python cribl-pusher.py --workspace prod --log-file audit.log --from-file --yes
-
-# Combine both
-python cribl-pusher.py --workspace qa --log-level DEBUG --log-file debug.log --dry-run --from-file
+# Write logs to a file (appended across runs)
+python cribl-pusher.py --workspace azn-dev --log-file audit.log --from-file --yes
 ```
-
-### Log file location
-
-The `--log-file` path is relative to wherever you run the script from. Logs are **appended**, so the file grows across runs — useful for a permanent audit trail.
-
-> `*.log` files are in `.gitignore` and will not be committed.
 
 ---
 
 ## Safety Features
 
-The script has several guards that prevent accidental data loss:
-
 | Guard | What it does |
 |---|---|
 | **Diff preview** | Always shows a full unified diff before asking for confirmation |
-| **Minimum routes check** | Refuses to PATCH if the API returns fewer routes than `min_existing_total_routes` (protects against an empty/wrong response being pushed back) |
+| **Minimum routes check** | Refuses to PATCH if the API returns fewer routes than `min_existing_total_routes` |
 | **No-shrink check** | Refuses to PATCH if the new total route count is less than the current count |
-| **Duplicate skip** | Silently skips any app whose route name or filter already exists — never creates duplicates |
-| **require_allow** | Prod workspaces require typing `ALLOW` before any writes |
-| **Dry run** | `--dry-run` runs the full logic (including auth and GET) but never calls POST or PATCH |
-| **Rollback snapshot** | The original route object is saved to `cribl_snapshots/{workspace}/` before every PATCH |
+| **Duplicate skip** | Skips any app whose route name or filter already exists |
+| **require_allow** | Protected workspaces require typing `ALLOW` or passing `--allow-prod` |
+| **Dry run** | Runs the full logic (auth + GET) but never calls POST or PATCH |
+| **Rollback snapshot** | Original route object saved to `cribl_snapshots/{workspace}/` before every PATCH |
 
 ---
 
 ## Rolling Back a Change
 
-If something went wrong after a successful PATCH, find the snapshot file printed in the output:
+Find the snapshot file printed in the run output:
 
 ```
-[SNAPSHOT] Saved rollback snapshot: cribl_snapshots/prod/routes_default_snapshot_20240315T143022Z.json
+[SNAPSHOT] cribl_snapshots/azn-prod/routes_snapshot_20240315T143022Z.json
 ```
 
-To restore, send that file back to Cribl using the exact `routes_url` printed in the `=== TARGET ===` banner when the script ran:
+Restore it using the `routes_url` from the `=== TARGET ===` banner:
 
 ```bash
 curl -k -X PATCH \
-  "https://YOUR_CRIBL_HOST:9000/api/v1/m/{worker_group}/routes/{routes_table}" \
+  "https://YOUR_CRIBL:9000/api/v1/m/{worker_group}/routes/{routes_table}" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
-  -d @cribl_snapshots/{workspace}/routes_default_snapshot_20240315T143022Z.json
+  -d @cribl_snapshots/azn-prod/routes_snapshot_20240315T143022Z.json
 ```
-
-**Example** — workspace `prod`, worker group `prod`, routes table `prod`:
-
-```bash
-curl -k -X PATCH \
-  "https://YOUR_CRIBL_HOST:9000/api/v1/m/prod/routes/prod" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @cribl_snapshots/prod/routes_default_snapshot_20240315T143022Z.json
-```
-
-The exact URL is always shown in the `routes_url` line of the `=== TARGET ===` banner — copy it from there to be sure.
 
 ---
 
@@ -649,64 +650,57 @@ The exact URL is always shown in the `routes_url` line of the `=== TARGET ===` b
 
 ### `Config file not found: config.json`
 
-You have not created your config file yet. Copy the example:
-
 ```bash
 copy config.example.json config.json   # Windows
 cp config.example.json config.json     # Mac/Linux
 ```
 
-Then fill in `base_url`, `credentials`, and `workspaces`.
+---
+
+### `FileNotFoundError: route_template.json`
+
+The template files are not created automatically. See [Step 5 — Create the template files](#step-5--create-the-template-files).
 
 ---
 
 ### `[ERR] login failed: 401`
 
-- Wrong username or password in `config.json`
-- Or the Cribl instance requires a token — generate one in the Cribl UI under **Settings → API tokens** and put it in `credentials.token`
+- Wrong username/password in `config.json`
+- Or use a token: generate one in Cribl UI under **Settings → API tokens** and set `credentials.token`
 
 ---
 
 ### `SSL: CERTIFICATE_VERIFY_FAILED`
 
-Your Cribl instance uses a self-signed certificate. Set `skip_ssl` in config:
-
 ```json
 "skip_ssl": true
 ```
 
-Or pass the flag at runtime:
-
-```bash
-python cribl-pusher.py --skip-ssl --workspace dev ...
-```
+Or pass `--skip-ssl` at runtime.
 
 ---
 
 ### `[SAFETY] Refusing to PATCH: total_before=0 < min=1`
 
-The GET request returned an empty route table, which is almost certainly wrong. Check:
-- Is `base_url` correct?
-- Is `worker_group` correct for this workspace?
-- Does your token/user have permission to read routes?
+The GET returned an empty route table. Check `base_url`, `worker_group`, and that your token has permission to read routes.
 
 ---
 
-### `Cannot locate routes array/group in GET response`
+### `json.decoder.JSONDecodeError` when running rode_rm.py
 
-The API response shape is unexpected. Run with `--dry-run` and add a temporary `print(current_obj)` after the GET to inspect what Cribl is returning.
+The ELK template body failed to parse. This usually means the Jinja2 template rendered invalid JSON. Run with `--skip-elk --skip-cribl` first to generate and inspect the template files in `ops_rm_r_templates_output/`.
 
 ---
 
-### `[SKIP] route already exists for APP001`
+### `ModuleNotFoundError: No module named 'jinja2'`
 
-Not an error. The route for that app was already present — the script skipped it to avoid duplicates.
+```bash
+pip install jinja2
+```
 
 ---
 
 ### `ModuleNotFoundError: No module named 'requests'`
-
-Install dependencies:
 
 ```bash
 pip install requests urllib3
@@ -714,37 +708,19 @@ pip install requests urllib3
 
 ---
 
-### `ModuleNotFoundError: No module named 'streamlit'`
+### Streamlit UI shows a blank right panel after clicking Run
 
-Install Streamlit to use the web UI:
-
-```bash
-pip install streamlit
-```
-
----
-
-### Docker container exits immediately / `config.json not found`
-
-The config and template files must be volume-mounted — they are not baked into the image. Make sure every `-v` mount in your `docker run` command points to an existing file on the host.
+The script likely exited with an error before producing output. Check:
+- `config.json` has the correct `base_url` and credentials
+- The workspace's `dest_template` file exists
+- Enable **Debug** log level in the UI for detailed HTTP output
 
 ---
 
-### Docker container can't reach Cribl (`Connection refused` / timeout)
+### Docker container can't reach Cribl
 
-If Cribl is running on the same host machine, use `host.docker.internal` instead of `localhost` in `config.json`:
+If Cribl is running on the same host machine, use `host.docker.internal` instead of `localhost`:
 
 ```json
 "base_url": "https://host.docker.internal:9000"
 ```
-
----
-
-### Streamlit UI shows a blank right panel after clicking Run
-
-The script likely exited with an error before producing output. Check that:
-- `config.json` has the correct `base_url` and credentials
-- The workspace's `dest_template` file exists
-- You are not running in a network environment that blocks Cribl
-
-Enable **Debug** log level in the UI to see detailed output including each HTTP request.

@@ -45,7 +45,7 @@ def ws_label(name: str, cfg: dict) -> str:
 
 
 def build_command(
-    workspace, allow_prod, mode, appid, appname, appfile_path,
+    workspace, allow_prod, cribl_url, mode, appid, appname, appfile_path,
     dry_run, skip_ssl, log_level, log_file,
     token, username, password,
     group_id, create_missing_group, group_name,
@@ -59,6 +59,7 @@ def build_command(
         "--config", str(CONFIG_PATH),
     ]
 
+    if cribl_url.strip():   cmd += ["--cribl-url", cribl_url.strip()]
     if allow_prod:          cmd.append("--allow-prod")
     if dry_run:             cmd.append("--dry-run")
     if skip_ssl:            cmd.append("--skip-ssl")
@@ -130,18 +131,18 @@ def run_subprocess(cmd: list[str]) -> tuple[str, int]:
 
 
 def build_command_rm(
-    app_name, apmid,
+    mode, app_name, apmid, appfile_path,
     elk_url, elk_user, elk_password, elk_token,
-    workspace, allow_prod, order,
+    cribl_url, workspace, allow_prod, order,
     skip_elk, skip_cribl,
     dry_run, skip_ssl, log_level,
 ) -> list[str]:
-    cmd = [
-        sys.executable, str(RODE_RM),
-        "--yes",
-        "--app_name", app_name.strip(),
-        "--apmid", apmid.strip(),
-    ]
+    cmd = [sys.executable, str(RODE_RM), "--yes"]
+
+    if mode == "single":
+        cmd += ["--app_name", app_name.strip(), "--apmid", apmid.strip()]
+    else:
+        cmd += ["--from-file", "--appfile", appfile_path]
 
     if not skip_elk:
         cmd += ["--elk-url", elk_url.strip()]
@@ -152,6 +153,8 @@ def build_command_rm(
             if elk_password.strip():
                 cmd += ["--elk-password", elk_password.strip()]
 
+    if cribl_url.strip():
+        cmd += ["--cribl-url", cribl_url.strip()]
     cmd += ["--workspace", workspace]
     if allow_prod:   cmd.append("--allow-prod")
     cmd += ["--order", order]
@@ -165,13 +168,17 @@ def build_command_rm(
 
 
 def validate_rm(
-    app_name, apmid,
-    elk_url, elk_user, elk_token,
+    mode, app_name, apmid, uploaded_file,
+    elk_url, elk_user, elk_password, elk_token,
     skip_elk, skip_cribl,
 ) -> list[str]:
     errors = []
-    if not app_name.strip(): errors.append("App Name is required.")
-    if not apmid.strip():    errors.append("APM ID is required.")
+    if mode == "single":
+        if not app_name.strip(): errors.append("App Name is required.")
+        if not apmid.strip():    errors.append("App ID is required.")
+    else:
+        if uploaded_file is None:
+            errors.append("Please upload an app list file (.txt).")
 
     if skip_elk and skip_cribl:
         errors.append("Nothing to do: both Skip ELK and Skip Cribl are checked.")
@@ -182,6 +189,8 @@ def validate_rm(
             errors.append("ELK URL is required when not skipping ELK.")
         if not elk_token.strip() and not elk_user.strip():
             errors.append("ELK User or ELK Token is required when not skipping ELK.")
+        if not elk_token.strip() and elk_user.strip() and not elk_password.strip():
+            errors.append("ELK Password is required when ELK User is set.")
 
     return errors
 
@@ -193,7 +202,7 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("Aplication onboarding")
+st.title("Application onboarding")
 st.caption("Add routes and destinations across Cribl workspaces.")
 
 # ── Load config ───────────────────────────────────────────────────────────────
@@ -226,6 +235,12 @@ with tab1:
     # ── LEFT — Form ───────────────────────────────────────────────────────────
     with left:
         st.subheader("Workspace")
+
+        _cribl_urls = config.get("cribl_urls", [])
+        if _cribl_urls:
+            cribl_url = st.selectbox("Cribl URL", _cribl_urls, key="cribl_url")
+        else:
+            cribl_url = st.text_input("Cribl URL", placeholder="leave blank to use config.json", key="cribl_url")
 
         labels         = [ws_label(n, workspaces[n]) for n in ws_names]
         selected_label = st.selectbox("Select workspace", labels)
@@ -344,6 +359,7 @@ with tab1:
             cmd = build_command(
                 workspace             = selected_ws,
                 allow_prod            = allow_prod,
+                cribl_url             = cribl_url,
                 mode                  = "single" if mode == "Single App" else "bulk",
                 appid                 = appid,
                 appname               = appname,
@@ -399,14 +415,34 @@ with tab2:
 
     # ── LEFT — Form ───────────────────────────────────────────────────────────
     with rm_left:
-        st.subheader("App Identity")
-        rm_app_name = st.text_input("App Name", placeholder="my-application", key="rm_app_name")
-        rm_apmid    = st.text_input("APM ID",   placeholder="APM-12345",      key="rm_apmid")
+        st.subheader("App Input")
+        rm_mode = st.radio("Mode", ["Single App", "Bulk File"], horizontal=True, key="rm_mode")
+
+        rm_apmid = rm_app_name = ""
+        rm_uploaded_file = None
+
+        if rm_mode == "Single App":
+            rm_apmid    = st.text_input("App ID",   placeholder="app00001234",    key="rm_apmid")
+            rm_app_name = st.text_input("App Name", placeholder="my-application", key="rm_app_name")
+        else:
+            st.caption("One entry per line: `appid, appname` — lines starting with `#` are ignored.")
+            rm_uploaded_file = st.file_uploader("App list (.txt)", type=["txt"], key="rm_appfile")
+            if rm_uploaded_file:
+                raw   = rm_uploaded_file.getvalue().decode("utf-8", errors="replace")
+                valid = [l for l in raw.splitlines() if l.strip() and not l.strip().startswith("#")]
+                st.caption(f"{len(valid)} app(s) found in file.")
+                with st.expander("Preview first 5"):
+                    st.code("\n".join(valid[:5]) or "(empty)")
+                rm_uploaded_file.seek(0)
 
         st.divider()
 
         st.subheader("ELK Connection")
-        rm_elk_url      = st.text_input("ELK URL",      placeholder="https://elk.example.com", key="rm_elk_url")
+        _elk_urls = config.get("elk_urls", [])
+        if _elk_urls:
+            rm_elk_url = st.selectbox("ELK URL", _elk_urls, key="rm_elk_url")
+        else:
+            rm_elk_url = st.text_input("ELK URL", placeholder="https://elk.example.com", key="rm_elk_url")
         rm_elk_token    = st.text_input("ELK Token",    type="password",
                                         placeholder="Overrides user/password if set", key="rm_elk_token")
         st.markdown("*— or user/password —*")
@@ -417,6 +453,12 @@ with tab2:
         st.divider()
 
         st.subheader("Cribl Workspace")
+        _cribl_urls = config.get("cribl_urls", [])
+        if _cribl_urls:
+            rm_cribl_url = st.selectbox("Cribl URL", _cribl_urls, key="rm_cribl_url")
+        else:
+            rm_cribl_url = st.text_input("Cribl URL", placeholder="https://cribl.example.com:9000",
+                                         key="rm_cribl_url")
         rm_labels         = [ws_label(n, workspaces[n]) for n in ws_names]
         rm_selected_label = st.selectbox("Select workspace", rm_labels, key="rm_workspace")
         rm_selected_ws    = ws_names[rm_labels.index(rm_selected_label)]
@@ -465,14 +507,18 @@ with tab2:
 
     # ── Run logic ─────────────────────────────────────────────────────────────
     if rm_run_clicked:
+        rm_mode_key = "single" if rm_mode == "Single App" else "bulk"
         rm_errors = validate_rm(
-            app_name  = rm_app_name,
-            apmid     = rm_apmid,
-            elk_url   = rm_elk_url,
-            elk_user  = rm_elk_user,
-            elk_token = rm_elk_token,
-            skip_elk  = rm_skip_elk,
-            skip_cribl= rm_skip_cribl,
+            mode        = rm_mode_key,
+            app_name    = rm_app_name,
+            apmid       = rm_apmid,
+            uploaded_file = rm_uploaded_file,
+            elk_url     = rm_elk_url,
+            elk_user    = rm_elk_user,
+            elk_password= rm_elk_password,
+            elk_token   = rm_elk_token,
+            skip_elk    = rm_skip_elk,
+            skip_cribl  = rm_skip_cribl,
         )
         if rm_requires_allow and not rm_allow_prod:
             rm_errors.append(f"Workspace '{rm_selected_ws}' requires the 'Allow production writes' checkbox.")
@@ -483,40 +529,59 @@ with tab2:
                     st.error(e)
             st.stop()
 
-        rm_order_val = "elk-first" if rm_order == "ELK first" else "cribl-first"
-        cmd_rm = build_command_rm(
-            app_name    = rm_app_name,
-            apmid       = rm_apmid,
-            elk_url     = rm_elk_url,
-            elk_user    = rm_elk_user,
-            elk_password= rm_elk_password,
-            elk_token   = rm_elk_token,
-            workspace   = rm_selected_ws,
-            allow_prod  = rm_allow_prod,
-            order       = rm_order_val,
-            skip_elk    = rm_skip_elk,
-            skip_cribl  = rm_skip_cribl,
-            dry_run     = rm_dry_run,
-            skip_ssl    = rm_skip_ssl,
-            log_level   = rm_log_level,
-        )
+        rm_tmp_path = None
+        try:
+            if rm_mode_key == "bulk" and rm_uploaded_file is not None:
+                with tempfile.NamedTemporaryFile(
+                    mode="wb", suffix=".txt", delete=False, dir=SCRIPT_DIR
+                ) as tmp:
+                    tmp.write(rm_uploaded_file.getvalue())
+                    rm_tmp_path = tmp.name
 
-        masked_rm = [
-            "***" if i > 0 and cmd_rm[i - 1] in ("--elk-password", "--elk-token") else part
-            for i, part in enumerate(cmd_rm)
-        ]
-        with rm_right:
-            with st.expander("Command"):
-                st.code(" ".join(masked_rm), language="bash")
-            with st.spinner("Running..."):
-                rm_output, rm_returncode = run_subprocess(cmd_rm)
+            rm_order_val = "elk-first" if rm_order == "ELK first" else "cribl-first"
+            cmd_rm = build_command_rm(
+                mode        = rm_mode_key,
+                app_name    = rm_app_name,
+                apmid       = rm_apmid,
+                appfile_path= rm_tmp_path or "",
+                elk_url     = rm_elk_url,
+                elk_user    = rm_elk_user,
+                elk_password= rm_elk_password,
+                elk_token   = rm_elk_token,
+                cribl_url   = rm_cribl_url,
+                workspace   = rm_selected_ws,
+                allow_prod  = rm_allow_prod,
+                order       = rm_order_val,
+                skip_elk    = rm_skip_elk,
+                skip_cribl  = rm_skip_cribl,
+                dry_run     = rm_dry_run,
+                skip_ssl    = rm_skip_ssl,
+                log_level   = rm_log_level,
+            )
 
-        st.session_state.rm_last_output     = rm_output
-        st.session_state.rm_last_returncode = rm_returncode
+            masked_rm = [
+                "***" if i > 0 and cmd_rm[i - 1] in ("--elk-password", "--elk-token") else part
+                for i, part in enumerate(cmd_rm)
+            ]
+            with rm_right:
+                with st.expander("Command"):
+                    st.code(" ".join(masked_rm), language="bash")
+                with st.spinner("Running..."):
+                    rm_output, rm_returncode = run_subprocess(cmd_rm)
 
-        with rm_right:
-            if rm_returncode == 0:
-                st.success("Completed successfully (exit code 0).")
-            else:
-                st.error(f"Finished with errors (exit code {rm_returncode}).")
-            rm_out_placeholder.code(rm_output, language="")
+            st.session_state.rm_last_output     = rm_output
+            st.session_state.rm_last_returncode = rm_returncode
+
+            with rm_right:
+                if rm_returncode == 0:
+                    st.success("Completed successfully (exit code 0).")
+                else:
+                    st.error(f"Finished with errors (exit code {rm_returncode}).")
+                rm_out_placeholder.code(rm_output, language="")
+
+        finally:
+            if rm_tmp_path and os.path.exists(rm_tmp_path):
+                try:
+                    os.unlink(rm_tmp_path)
+                except OSError:
+                    pass

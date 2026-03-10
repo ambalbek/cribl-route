@@ -7,6 +7,7 @@ from cribl_utils import (
     die, now_stamp, pretty_json, unified_diff,
     read_json, make_session, confirm_or_exit,
     prompt_text, prompt_password, prompt_choice,
+    read_apps_from_file,
 )
 from cribl_api import (
     cribl_login_token, normalize_route, find_default_route_index,
@@ -170,93 +171,95 @@ def _parse_kibana_console(rendered: str):
     return method, path, body
 
 
-def push_elk(app_name, apmid, configurations, elk_url, session, headers, dry_run, log):
+def push_elk(apps, configurations, elk_url, session, headers, dry_run, log):
+    """Push roles and role-mappings for every (app_name, apmid) in apps."""
     base = elk_url.rstrip("/")
     ok = True
 
-    all_roles         = []
-    all_role_mappings = []
+    for app_name, apmid in apps:
+        log.info(f"  [ELK] Processing app: {apmid} ({app_name})")
+        all_roles         = []
+        all_role_mappings = []
 
-    for cfg in configurations:
-        region      = cfg["region"]
-        environment = cfg["environment"]
-        domain      = cfg["domain"]
-        roles       = cfg["roles"]
+        for cfg in configurations:
+            region      = cfg["region"]
+            environment = cfg["environment"]
+            domain      = cfg["domain"]
+            roles       = cfg["roles"]
 
-        role_puser,    rm_puser = generate_templates(app_name, apmid, environment, region, "PUSER", domain, roles)
-        role_user,     rm_user  = generate_templates(app_name, apmid, environment, region, "USER",  domain, roles)
+            role_puser, rm_puser = generate_templates(app_name, apmid, environment, region, "PUSER", domain, roles)
+            role_user,  rm_user  = generate_templates(app_name, apmid, environment, region, "USER",  domain, roles)
 
-        all_roles         += [role_puser, role_user]
-        all_role_mappings += [rm_puser,   rm_user]
+            all_roles         += [role_puser, role_user]
+            all_role_mappings += [rm_puser,   rm_user]
 
-    for rendered in all_roles + all_role_mappings:
-        _, path, body = _parse_kibana_console(rendered)
-        url = base + path
-        if dry_run:
-            log.info(f"  [DRY-RUN] PUT {url}")
-            continue
-        log.debug(f"  PUT {url}")
-        r = session.put(url, headers=headers, json=body, timeout=60)
-        if r.status_code in (200, 201):
-            log.info(f"  [OK]  {url}")
-        else:
-            log.error(f"  [ERR] {url} → {r.status_code}: {r.text}")
-            ok = False
+        for rendered in all_roles + all_role_mappings:
+            _, path, body = _parse_kibana_console(rendered)
+            url = base + path
+            if dry_run:
+                log.info(f"    [DRY-RUN] PUT {url}")
+                continue
+            log.debug(f"    PUT {url}")
+            r = session.put(url, headers=headers, json=body, timeout=60)
+            if r.status_code in (200, 201):
+                log.info(f"    [OK]  {url}")
+            else:
+                log.error(f"    [ERR] {url} → {r.status_code}: {r.text}")
+                ok = False
 
     return ok
 
 
 # ── save templates to disk (your original logic, unchanged) ───────────────────
 
-def save_templates(app_name, apmid, configurations):
+def save_templates(apps, configurations):
+    """Save ELK templates for every (app_name, apmid) in apps."""
     os.makedirs("ops_rm_r_templates_output", exist_ok=True)
 
-    all_roles         = []
-    all_role_mappings = []
+    for app_name, apmid in apps:
+        all_roles         = []
+        all_role_mappings = []
+        pushable_roles         = []
+        pushable_role_mappings = []
 
-    pushable_roles         = []
-    pushable_role_mappings = []
+        for cfg in configurations:
+            region      = cfg["region"]
+            environment = cfg["environment"]
+            domain      = cfg["domain"]
+            roles       = cfg["roles"]
 
-    for cfg in configurations:
-        region      = cfg["region"]
-        environment = cfg["environment"]
-        domain      = cfg["domain"]
-        roles       = cfg["roles"]
+            role_puser, role_mapping_puser = generate_templates(app_name, apmid, environment, region, "PUSER", domain, roles)
+            role_user,  role_mapping_user  = generate_templates(app_name, apmid, environment, region, "USER",  domain, roles)
 
-        role_puser, role_mapping_puser = generate_templates(app_name, apmid, environment, region, "PUSER", domain, roles)
-        role_user,  role_mapping_user  = generate_templates(app_name, apmid, environment, region, "USER",  domain, roles)
+            all_roles         += [role_puser, role_user]
+            all_role_mappings += [role_mapping_puser, role_mapping_user]
 
-        all_roles.append(role_puser)
-        all_roles.append(role_user)
-        all_role_mappings.append(role_mapping_puser)
-        all_role_mappings.append(role_mapping_user)
+            for rendered in [role_puser, role_user]:
+                _, path, body = _parse_kibana_console(rendered)
+                pushable_roles.append({"method": "PUT", "path": path, "body": body})
 
-        for rendered in [role_puser, role_user]:
-            _, path, body = _parse_kibana_console(rendered)
-            pushable_roles.append({"method": "PUT", "path": path, "body": body})
+            for rendered in [role_mapping_puser, role_mapping_user]:
+                _, path, body = _parse_kibana_console(rendered)
+                pushable_role_mappings.append({"method": "PUT", "path": path, "body": body})
 
-        for rendered in [role_mapping_puser, role_mapping_user]:
-            _, path, body = _parse_kibana_console(rendered)
-            pushable_role_mappings.append({"method": "PUT", "path": path, "body": body})
+        with open(f"ops_rm_r_templates_output/roles_{apmid}.json", "w") as f:
+            f.write("\n".join(all_roles))
 
-    with open(f"ops_rm_r_templates_output/roles_{apmid}.json", "w") as f:
-        f.write("\n".join(all_roles))
+        with open(f"ops_rm_r_templates_output/role_mappings_{apmid}.json", "w") as f:
+            f.write("\n".join(all_role_mappings))
 
-    with open(f"ops_rm_r_templates_output/role_mappings_{apmid}.json", "w") as f:
-        f.write("\n".join(all_role_mappings))
+        with open(f"ops_rm_r_templates_output/roles_{apmid}_pushable.json", "w") as f:
+            json.dump(pushable_roles, f, indent=2)
 
-    with open(f"ops_rm_r_templates_output/roles_{apmid}_pushable.json", "w") as f:
-        json.dump(pushable_roles, f, indent=2)
+        with open(f"ops_rm_r_templates_output/role_mappings_{apmid}_pushable.json", "w") as f:
+            json.dump(pushable_role_mappings, f, indent=2)
 
-    with open(f"ops_rm_r_templates_output/role_mappings_{apmid}_pushable.json", "w") as f:
-        json.dump(pushable_role_mappings, f, indent=2)
-
-    print("Consolidated templates generated and saved in 'ops_rm_r_templates_output/' directory.")
+    print(f"Templates for {len(apps)} app(s) saved in 'ops_rm_r_templates_output/' directory.")
 
 
 # ── Cribl push (framework pattern) ───────────────────────────────────────────
 
-def push_cribl(appid, appname, workspace_name, args, log):
+def push_cribl(apps, workspace_name, args, log):
     config        = load_config(args.config)
     workspace_cfg = get_workspace(config, workspace_name)
 
@@ -273,6 +276,10 @@ def push_cribl(appid, appname, workspace_name, args, log):
     snapshot_dir = config.get("snapshot_dir", "cribl_snapshots")
 
     root_url, api_base = build_workspace_urls(config, workspace_cfg)
+    if getattr(args, "cribl_url", "").strip():
+        root_url = args.cribl_url.rstrip("/")
+        worker_group = workspace_cfg["worker_group"]
+        api_base = f"{root_url}/api/v1/m/{worker_group}"
 
     route_tmpl_path = workspace_cfg.get("route_template") or config.get("route_template", "route_template.json")
     dest_tmpl_path  = workspace_cfg.get("dest_template", "")
@@ -335,18 +342,35 @@ def push_cribl(appid, appname, workspace_name, args, log):
     existing_filters = {r.get("filter") for r in existing_routes if r.get("filter")}
     default_idx      = find_default_route_index(existing_routes)
 
-    route = copy.deepcopy(route_template)
-    route["id"]     = appid
-    route["filter"] = f'apmId == "{appid}"'
-    route["output"] = f"abcd-blob-storage-northcentralus-{appid}"
-    route["name"]   = f"abcd-blob-storage-route-{appid}"
-    route           = normalize_route(route, fallback_pipeline)
+    # Build new routes and destinations for all apps in one pass
+    new_routes = []
+    new_dests  = []  # list of (dest_id, dest_obj)
 
-    if route["name"] in existing_names or route["filter"] in existing_filters:
-        log.info(f"  [SKIP] Cribl route already exists for {appid}")
-        new_routes = []
-    else:
-        new_routes = [route]
+    for app_name, apmid in apps:
+        appid = apmid
+        route = copy.deepcopy(route_template)
+        route["id"]     = appid
+        route["filter"] = f'apmId == "{appid}"'
+        route["output"] = f"abcd-blob-storage-northcentralus-{appid}"
+        route["name"]   = f"abcd-blob-storage-route-{appid}"
+        route           = normalize_route(route, fallback_pipeline)
+
+        if route["name"] in existing_names or route["filter"] in existing_filters:
+            log.info(f"  [SKIP] Cribl route already exists for {appid}")
+        else:
+            new_routes.append(route)
+
+        dest_id = f"abcd-blob-storage-northcentralus-{appid}"
+        if dest_id in existing_dest_ids:
+            log.info(f"  [SKIP] Destination already exists: {dest_id}")
+        else:
+            dest = copy.deepcopy(dest_template)
+            dest["id"]            = dest_id
+            dest["containerName"] = f'"{appid}"'
+            dest["description"]   = app_name
+            if "name" in dest:
+                dest["name"] = dest_id
+            new_dests.append((dest_id, dest))
 
     updated_routes = existing_routes[:default_idx] + new_routes + existing_routes[default_idx:]
     target_container[routes_key] = updated_routes
@@ -378,16 +402,7 @@ def push_cribl(appid, appname, workspace_name, args, log):
         json.dump(current_obj, f, indent=2)
     log.info(f"  [SNAPSHOT] {snap_file}")
 
-    dest_id = f"abcd-blob-storage-northcentralus-{appid}"
-    if dest_id in existing_dest_ids:
-        log.info(f"  [SKIP] Destination already exists: {dest_id}")
-    else:
-        dest = copy.deepcopy(dest_template)
-        dest["id"]            = dest_id
-        dest["containerName"] = f'"{appid}"'
-        dest["description"]   = appname
-        if "name" in dest:
-            dest["name"] = dest_id
+    for dest_id, dest in new_dests:
         rp = session.post(outputs_url, headers=H(), json=dest, timeout=60)
         if rp.status_code in (200, 201):
             log.info(f"  [OK] Created destination {dest_id}")
@@ -411,9 +426,11 @@ def push_cribl(appid, appname, workspace_name, args, log):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate role and role mapping templates for Elasticsearch, push to ELK, and apply Cribl routes.")
-    # original args
-    parser.add_argument("--app_name", type=str, required=True,  help="The application name.")
-    parser.add_argument("--apmid",    type=str, required=True,  help="The lower-cased organization name.")
+    # app identity — single app or bulk file
+    parser.add_argument("--app_name",   type=str, default="", help="The application name (single-app mode).")
+    parser.add_argument("--apmid",      type=str, default="", help="The app ID / lower-cased org name (single-app mode).")
+    parser.add_argument("--from-file",  action="store_true",  help="Read app list from file instead of --app_name/--apmid.")
+    parser.add_argument("--appfile",    default="appids.txt", help="Path to app list file (one 'appid, appname' per line).")
     # ELK push args
     parser.add_argument("--elk-url",      default="", help="Elasticsearch base URL (required unless --skip-elk)")
     parser.add_argument("--elk-user",     default="", help="Elasticsearch username (basic auth)")
@@ -422,6 +439,7 @@ def main():
     parser.add_argument("--skip-elk",     action="store_true", help="Skip ELK API calls (templates still saved)")
     # Cribl args
     parser.add_argument("--config",     default="config.json", help="Path to Cribl config file")
+    parser.add_argument("--cribl-url",  default="",            help="Cribl base URL override (overrides config base_url)")
     parser.add_argument("--workspace",  default="",            help="Cribl workspace name")
     parser.add_argument("--allow-prod", action="store_true",   help="Required for require_allow workspaces")
     parser.add_argument("--token",      default="",            help="Cribl bearer token override")
@@ -447,8 +465,13 @@ def main():
         log.addHandler(h)
     log.propagate = False
 
-    app_name = args.app_name
-    apmid    = args.apmid
+    # Build apps list
+    if args.from_file:
+        apps = read_apps_from_file(args.appfile)
+    else:
+        if not args.app_name or not args.apmid:
+            parser.error("--app_name and --apmid are required unless --from-file is set.")
+        apps = [(args.app_name, args.apmid)]
 
     configurations = [
         {"region": "onshore",  "environment": "test",  "domain": "adabcdtst", "roles": ["watcher_user"]},
@@ -472,7 +495,7 @@ def main():
         args.workspace = prompt_choice("Select Cribl workspace", ws_names)
 
     # always save templates to disk (original behaviour)
-    save_templates(app_name, apmid, configurations)
+    save_templates(apps, configurations)
 
     confirm_or_exit("\nProceed to push to ELK and Cribl?", args.yes or args.dry_run)
 
@@ -496,7 +519,7 @@ def main():
             log.info("[ELK] Skipped.")
             return
         log.info("[ELK] Pushing roles and role-mappings …")
-        ok = push_elk(app_name, apmid, configurations,
+        ok = push_elk(apps, configurations,
                       args.elk_url, elk_session, elk_headers, args.dry_run, log)
         if ok:
             log.info("[ELK] Done.")
@@ -508,7 +531,7 @@ def main():
             log.info("[CRIBL] Skipped.")
             return
         log.info(f"[CRIBL] Pushing route + destination to workspace '{args.workspace}' …")
-        push_cribl(apmid, app_name, args.workspace, args, log)
+        push_cribl(apps, args.workspace, args, log)
         log.info("[CRIBL] Done.")
 
     if args.order == "elk-first":

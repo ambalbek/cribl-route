@@ -132,12 +132,13 @@ def run_subprocess(cmd: list[str]) -> tuple[str, int]:
 
 def build_command_rm(
     mode, app_name, apmid, appfile_path,
-    elk_url, elk_user, elk_password, elk_token,
+    elk_url_nonprod, elk_token_nonprod, elk_user_nonprod, elk_password_nonprod,
+    elk_url_prod,    elk_token_prod,    elk_user_prod,    elk_password_prod,
     cribl_url, workspace, allow_prod, order,
     skip_elk, skip_cribl,
     dry_run, skip_ssl, log_level,
 ) -> list[str]:
-    cmd = [sys.executable, str(RODE_RM), "--yes"]
+    cmd = [sys.executable, str(RODE_RM), "--yes", "--config", str(CONFIG_PATH)]
 
     if mode == "single":
         cmd += ["--app_name", app_name.strip(), "--apmid", apmid.strip()]
@@ -145,13 +146,21 @@ def build_command_rm(
         cmd += ["--from-file", "--appfile", appfile_path]
 
     if not skip_elk:
-        cmd += ["--elk-url", elk_url.strip()]
-        if elk_token.strip():
-            cmd += ["--elk-token", elk_token.strip()]
-        elif elk_user.strip():
-            cmd += ["--elk-user", elk_user.strip()]
-            if elk_password.strip():
-                cmd += ["--elk-password", elk_password.strip()]
+        cmd += ["--elk-url", elk_url_nonprod.strip()]
+        if elk_token_nonprod.strip():
+            cmd += ["--elk-token", elk_token_nonprod.strip()]
+        elif elk_user_nonprod.strip():
+            cmd += ["--elk-user", elk_user_nonprod.strip()]
+            if elk_password_nonprod.strip():
+                cmd += ["--elk-password", elk_password_nonprod.strip()]
+
+        cmd += ["--elk-url-prod", elk_url_prod.strip()]
+        if elk_token_prod.strip():
+            cmd += ["--elk-token-prod", elk_token_prod.strip()]
+        elif elk_user_prod.strip():
+            cmd += ["--elk-user-prod", elk_user_prod.strip()]
+            if elk_password_prod.strip():
+                cmd += ["--elk-password-prod", elk_password_prod.strip()]
 
     if cribl_url.strip():
         cmd += ["--cribl-url", cribl_url.strip()]
@@ -169,7 +178,8 @@ def build_command_rm(
 
 def validate_rm(
     mode, app_name, apmid, uploaded_file,
-    elk_url, elk_user, elk_password, elk_token,
+    elk_url_nonprod, elk_token_nonprod, elk_user_nonprod, elk_password_nonprod,
+    elk_url_prod,    elk_token_prod,    elk_user_prod,    elk_password_prod,
     skip_elk, skip_cribl,
 ) -> list[str]:
     errors = []
@@ -185,12 +195,19 @@ def validate_rm(
         return errors
 
     if not skip_elk:
-        if not elk_url.strip():
-            errors.append("ELK URL is required when not skipping ELK.")
-        if not elk_token.strip() and not elk_user.strip():
-            errors.append("ELK User or ELK Token is required when not skipping ELK.")
-        if not elk_token.strip() and elk_user.strip() and not elk_password.strip():
-            errors.append("ELK Password is required when ELK User is set.")
+        if not elk_url_nonprod.strip():
+            errors.append("ELK Nonprod URL is required.")
+        if not elk_token_nonprod.strip() and not elk_user_nonprod.strip():
+            errors.append("ELK Nonprod: provide User or Token.")
+        if not elk_token_nonprod.strip() and elk_user_nonprod.strip() and not elk_password_nonprod.strip():
+            errors.append("ELK Nonprod Password is required when Nonprod User is set.")
+
+        if not elk_url_prod.strip():
+            errors.append("ELK Prod URL is required.")
+        if not elk_token_prod.strip() and not elk_user_prod.strip():
+            errors.append("ELK Prod: provide User or Token.")
+        if not elk_token_prod.strip() and elk_user_prod.strip() and not elk_password_prod.strip():
+            errors.append("ELK Prod Password is required when Prod User is set.")
 
     return errors
 
@@ -438,17 +455,34 @@ with tab2:
         st.divider()
 
         st.subheader("ELK Connection")
-        _elk_urls = config.get("elk_urls", [])
-        if _elk_urls:
-            rm_elk_url = st.selectbox("ELK URL", _elk_urls, key="rm_elk_url")
+        _elk_urls_nonprod = config.get("elk_urls_nonprod", config.get("elk_urls", []))
+        _elk_urls_prod    = config.get("elk_urls_prod",    config.get("elk_urls", []))
+
+        if _elk_urls_nonprod:
+            rm_elk_url_nonprod = st.selectbox("ELK Nonprod URL", _elk_urls_nonprod, key="rm_elk_url_nonprod")
         else:
-            rm_elk_url = st.text_input("ELK URL", placeholder="https://elk.example.com", key="rm_elk_url")
-        rm_elk_token    = st.text_input("ELK Token",    type="password",
-                                        placeholder="Overrides user/password if set", key="rm_elk_token")
+            rm_elk_url_nonprod = st.text_input("ELK Nonprod URL", placeholder="https://elk-nonprod.example.com", key="rm_elk_url_nonprod")
+
+        rm_elk_token_nonprod = st.text_input("ELK Nonprod Token", type="password",
+                                             placeholder="Overrides user/password if set", key="rm_elk_token_nonprod")
         st.markdown("*— or user/password —*")
-        ec1, ec2 = st.columns(2)
-        with ec1: rm_elk_user     = st.text_input("ELK User",     key="rm_elk_user")
-        with ec2: rm_elk_password = st.text_input("ELK Password", type="password", key="rm_elk_password")
+        nc1, nc2 = st.columns(2)
+        with nc1: rm_elk_user_nonprod     = st.text_input("ELK Nonprod User",     key="rm_elk_user_nonprod")
+        with nc2: rm_elk_password_nonprod = st.text_input("ELK Nonprod Password", type="password", key="rm_elk_password_nonprod")
+
+        st.divider()
+
+        if _elk_urls_prod:
+            rm_elk_url_prod = st.selectbox("ELK Prod URL", _elk_urls_prod, key="rm_elk_url_prod")
+        else:
+            rm_elk_url_prod = st.text_input("ELK Prod URL", placeholder="https://elk-prod.example.com", key="rm_elk_url_prod")
+
+        rm_elk_token_prod = st.text_input("ELK Prod Token", type="password",
+                                          placeholder="Overrides user/password if set", key="rm_elk_token_prod")
+        st.markdown("*— or user/password —*")
+        pc1, pc2 = st.columns(2)
+        with pc1: rm_elk_user_prod     = st.text_input("ELK Prod User",     key="rm_elk_user_prod")
+        with pc2: rm_elk_password_prod = st.text_input("ELK Prod Password", type="password", key="rm_elk_password_prod")
 
         st.divider()
 
@@ -509,16 +543,20 @@ with tab2:
     if rm_run_clicked:
         rm_mode_key = "single" if rm_mode == "Single App" else "bulk"
         rm_errors = validate_rm(
-            mode        = rm_mode_key,
-            app_name    = rm_app_name,
-            apmid       = rm_apmid,
-            uploaded_file = rm_uploaded_file,
-            elk_url     = rm_elk_url,
-            elk_user    = rm_elk_user,
-            elk_password= rm_elk_password,
-            elk_token   = rm_elk_token,
-            skip_elk    = rm_skip_elk,
-            skip_cribl  = rm_skip_cribl,
+            mode                  = rm_mode_key,
+            app_name              = rm_app_name,
+            apmid                 = rm_apmid,
+            uploaded_file         = rm_uploaded_file,
+            elk_url_nonprod       = rm_elk_url_nonprod,
+            elk_token_nonprod     = rm_elk_token_nonprod,
+            elk_user_nonprod      = rm_elk_user_nonprod,
+            elk_password_nonprod  = rm_elk_password_nonprod,
+            elk_url_prod          = rm_elk_url_prod,
+            elk_token_prod        = rm_elk_token_prod,
+            elk_user_prod         = rm_elk_user_prod,
+            elk_password_prod     = rm_elk_password_prod,
+            skip_elk              = rm_skip_elk,
+            skip_cribl            = rm_skip_cribl,
         )
         if rm_requires_allow and not rm_allow_prod:
             rm_errors.append(f"Workspace '{rm_selected_ws}' requires the 'Allow production writes' checkbox.")
@@ -540,15 +578,19 @@ with tab2:
 
             rm_order_val = "elk-first" if rm_order == "ELK first" else "cribl-first"
             cmd_rm = build_command_rm(
-                mode        = rm_mode_key,
-                app_name    = rm_app_name,
-                apmid       = rm_apmid,
-                appfile_path= rm_tmp_path or "",
-                elk_url     = rm_elk_url,
-                elk_user    = rm_elk_user,
-                elk_password= rm_elk_password,
-                elk_token   = rm_elk_token,
-                cribl_url   = rm_cribl_url,
+                mode                  = rm_mode_key,
+                app_name              = rm_app_name,
+                apmid                 = rm_apmid,
+                appfile_path          = rm_tmp_path or "",
+                elk_url_nonprod       = rm_elk_url_nonprod,
+                elk_token_nonprod     = rm_elk_token_nonprod,
+                elk_user_nonprod      = rm_elk_user_nonprod,
+                elk_password_nonprod  = rm_elk_password_nonprod,
+                elk_url_prod          = rm_elk_url_prod,
+                elk_token_prod        = rm_elk_token_prod,
+                elk_user_prod         = rm_elk_user_prod,
+                elk_password_prod     = rm_elk_password_prod,
+                cribl_url             = rm_cribl_url,
                 workspace   = rm_selected_ws,
                 allow_prod  = rm_allow_prod,
                 order       = rm_order_val,
@@ -560,7 +602,10 @@ with tab2:
             )
 
             masked_rm = [
-                "***" if i > 0 and cmd_rm[i - 1] in ("--elk-password", "--elk-token") else part
+                "***" if i > 0 and cmd_rm[i - 1] in (
+                    "--elk-password", "--elk-token",
+                    "--elk-password-prod", "--elk-token-prod",
+                ) else part
                 for i, part in enumerate(cmd_rm)
             ]
             with rm_right:

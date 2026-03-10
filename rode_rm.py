@@ -171,15 +171,22 @@ def _parse_kibana_console(rendered: str):
     return method, path, body
 
 
-def push_elk(apps, configurations, elk_url, session, headers, dry_run, log):
-    """Push roles and role-mappings for every (app_name, apmid) in apps."""
-    base = elk_url.rstrip("/")
+def push_elk(apps, configurations,
+             elk_url_nonprod, elk_url_prod,
+             session_nonprod, headers_nonprod,
+             session_prod,    headers_prod,
+             dry_run, log):
+    """Push roles and role-mappings for every (app_name, apmid) in apps.
+
+    Prod-environment configs are pushed to elk_url_prod with prod creds;
+    all others are pushed to elk_url_nonprod with nonprod creds.
+    """
+    base_nonprod = elk_url_nonprod.rstrip("/")
+    base_prod    = elk_url_prod.rstrip("/")
     ok = True
 
     for app_name, apmid in apps:
         log.info(f"  [ELK] Processing app: {apmid} ({app_name})")
-        all_roles         = []
-        all_role_mappings = []
 
         for cfg in configurations:
             region      = cfg["region"]
@@ -187,25 +194,28 @@ def push_elk(apps, configurations, elk_url, session, headers, dry_run, log):
             domain      = cfg["domain"]
             roles       = cfg["roles"]
 
+            is_prod = environment.lower() == "prod"
+            base    = base_prod    if is_prod else base_nonprod
+            session = session_prod if is_prod else session_nonprod
+            headers = headers_prod if is_prod else headers_nonprod
+            log.info(f"    [ELK] {environment.upper()} {region} → {base}")
+
             role_puser, rm_puser = generate_templates(app_name, apmid, environment, region, "PUSER", domain, roles)
             role_user,  rm_user  = generate_templates(app_name, apmid, environment, region, "USER",  domain, roles)
 
-            all_roles         += [role_puser, role_user]
-            all_role_mappings += [rm_puser,   rm_user]
-
-        for rendered in all_roles + all_role_mappings:
-            _, path, body = _parse_kibana_console(rendered)
-            url = base + path
-            if dry_run:
-                log.info(f"    [DRY-RUN] PUT {url}")
-                continue
-            log.debug(f"    PUT {url}")
-            r = session.put(url, headers=headers, json=body, timeout=60)
-            if r.status_code in (200, 201):
-                log.info(f"    [OK]  {url}")
-            else:
-                log.error(f"    [ERR] {url} → {r.status_code}: {r.text}")
-                ok = False
+            for rendered in [role_puser, role_user, rm_puser, rm_user]:
+                _, path, body = _parse_kibana_console(rendered)
+                url = base + path
+                if dry_run:
+                    log.info(f"      [DRY-RUN] PUT {url}")
+                    continue
+                log.debug(f"      PUT {url}")
+                r = session.put(url, headers=headers, json=body, timeout=60)
+                if r.status_code in (200, 201):
+                    log.info(f"      [OK]  {url}")
+                else:
+                    log.error(f"      [ERR] {url} → {r.status_code}: {r.text}")
+                    ok = False
 
     return ok
 
@@ -359,6 +369,8 @@ def push_cribl(apps, workspace_name, args, log):
             log.info(f"  [SKIP] Cribl route already exists for {appid}")
         else:
             new_routes.append(route)
+            existing_names.add(route["name"])
+            existing_filters.add(route["filter"])
 
         dest_id = f"abcd-blob-storage-northcentralus-{appid}"
         if dest_id in existing_dest_ids:
@@ -432,11 +444,15 @@ def main():
     parser.add_argument("--from-file",  action="store_true",  help="Read app list from file instead of --app_name/--apmid.")
     parser.add_argument("--appfile",    default="appids.txt", help="Path to app list file (one 'appid, appname' per line).")
     # ELK push args
-    parser.add_argument("--elk-url",      default="", help="Elasticsearch base URL (required unless --skip-elk)")
-    parser.add_argument("--elk-user",     default="", help="Elasticsearch username (basic auth)")
-    parser.add_argument("--elk-password", default="", help="Elasticsearch password (prompted if blank)")
-    parser.add_argument("--elk-token",    default="", help="Elasticsearch API key (overrides basic auth)")
-    parser.add_argument("--skip-elk",     action="store_true", help="Skip ELK API calls (templates still saved)")
+    parser.add_argument("--elk-url",           default="", help="Elasticsearch nonprod base URL (required unless --skip-elk)")
+    parser.add_argument("--elk-url-prod",      default="", help="Elasticsearch prod base URL (required unless --skip-elk)")
+    parser.add_argument("--elk-user",          default="", help="Elasticsearch nonprod username (basic auth)")
+    parser.add_argument("--elk-password",      default="", help="Elasticsearch nonprod password")
+    parser.add_argument("--elk-token",         default="", help="Elasticsearch nonprod API key (overrides basic auth)")
+    parser.add_argument("--elk-user-prod",     default="", help="Elasticsearch prod username (basic auth)")
+    parser.add_argument("--elk-password-prod", default="", help="Elasticsearch prod password")
+    parser.add_argument("--elk-token-prod",    default="", help="Elasticsearch prod API key (overrides basic auth)")
+    parser.add_argument("--skip-elk",          action="store_true", help="Skip ELK API calls (templates still saved)")
     # Cribl args
     parser.add_argument("--config",     default="config.json", help="Path to Cribl config file")
     parser.add_argument("--cribl-url",  default="",            help="Cribl base URL override (overrides config base_url)")
@@ -481,12 +497,19 @@ def main():
     ]
 
     # validate
-    if not args.skip_elk and not args.elk_url:
-        die("--elk-url is required unless --skip-elk is set.")
-    if not args.skip_elk and not args.elk_token and not args.elk_user:
-        die("Provide --elk-user or --elk-token unless --skip-elk is set.")
-    if not args.skip_elk and not args.elk_token and not args.elk_password:
-        args.elk_password = getpass.getpass("Elasticsearch password: ")
+    if not args.skip_elk:
+        if not args.elk_url:
+            die("--elk-url (nonprod) is required unless --skip-elk is set.")
+        if not args.elk_url_prod:
+            die("--elk-url-prod is required unless --skip-elk is set.")
+        if not args.elk_token and not args.elk_user:
+            die("Provide --elk-user or --elk-token (nonprod) unless --skip-elk is set.")
+        if not args.elk_token and not args.elk_password:
+            args.elk_password = getpass.getpass("Elasticsearch nonprod password: ")
+        if not args.elk_token_prod and not args.elk_user_prod:
+            die("Provide --elk-user-prod or --elk-token-prod unless --skip-elk is set.")
+        if not args.elk_token_prod and not args.elk_password_prod:
+            args.elk_password_prod = getpass.getpass("Elasticsearch prod password: ")
     if not args.skip_cribl and not args.workspace:
         config_data = load_config(args.config)
         ws_names    = get_workspace_names(config_data)
@@ -499,20 +522,28 @@ def main():
 
     confirm_or_exit("\nProceed to push to ELK and Cribl?", args.yes or args.dry_run)
 
-    # build ELK session/headers once
+    # build ELK sessions/headers (nonprod + prod) once
     import base64, urllib3
     if args.skip_ssl:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     import requests
-    elk_session = requests.Session()
-    elk_session.verify = not args.skip_ssl
-    if args.elk_token:
-        elk_headers = {"Content-Type": "application/json", "Accept": "application/json",
-                       "Authorization": f"ApiKey {args.elk_token}"}
-    else:
-        creds = base64.b64encode(f"{args.elk_user}:{args.elk_password}".encode()).decode()
-        elk_headers = {"Content-Type": "application/json", "Accept": "application/json",
-                       "Authorization": f"Basic {creds}"}
+
+    def _make_elk_session(skip_ssl):
+        s = requests.Session()
+        s.verify = not skip_ssl
+        return s
+
+    def _make_elk_headers(token, user, password):
+        ct = {"Content-Type": "application/json", "Accept": "application/json"}
+        if token:
+            return {**ct, "Authorization": f"ApiKey {token}"}
+        creds = base64.b64encode(f"{user}:{password}".encode()).decode()
+        return {**ct, "Authorization": f"Basic {creds}"}
+
+    elk_session_nonprod = _make_elk_session(args.skip_ssl)
+    elk_session_prod    = _make_elk_session(args.skip_ssl)
+    elk_headers_nonprod = _make_elk_headers(args.elk_token,      args.elk_user,      args.elk_password)
+    elk_headers_prod    = _make_elk_headers(args.elk_token_prod, args.elk_user_prod, args.elk_password_prod)
 
     def run_elk():
         if args.skip_elk:
@@ -520,7 +551,10 @@ def main():
             return
         log.info("[ELK] Pushing roles and role-mappings …")
         ok = push_elk(apps, configurations,
-                      args.elk_url, elk_session, elk_headers, args.dry_run, log)
+                      args.elk_url, args.elk_url_prod,
+                      elk_session_nonprod, elk_headers_nonprod,
+                      elk_session_prod,    elk_headers_prod,
+                      args.dry_run, log)
         if ok:
             log.info("[ELK] Done.")
         else:

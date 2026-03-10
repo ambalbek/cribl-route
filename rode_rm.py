@@ -72,7 +72,7 @@ POST /_security/role/R-{{APP_NAME}}-{{ENVIRONMENT}}-{{REGION}}-{{USER_TYPE}}
       "field_security": {
         "grant": ["*"]
       },
-      "query": """{"template":{"source":{"query_string":{"query":"{{apmid}}","default_field":"apmId"}}}}""",
+      "query": {"template":{"source":{"query_string":{"query":"{{apmid}}","default_field":"apmId"}}}},
       "allow_restricted_indices": false
     }
   ],
@@ -214,6 +214,9 @@ def save_templates(app_name, apmid, configurations):
     all_roles         = []
     all_role_mappings = []
 
+    pushable_roles         = []
+    pushable_role_mappings = []
+
     for cfg in configurations:
         region      = cfg["region"]
         environment = cfg["environment"]
@@ -228,11 +231,25 @@ def save_templates(app_name, apmid, configurations):
         all_role_mappings.append(role_mapping_puser)
         all_role_mappings.append(role_mapping_user)
 
+        for rendered in [role_puser, role_user]:
+            _, path, body = _parse_kibana_console(rendered)
+            pushable_roles.append({"method": "PUT", "path": path, "body": body})
+
+        for rendered in [role_mapping_puser, role_mapping_user]:
+            _, path, body = _parse_kibana_console(rendered)
+            pushable_role_mappings.append({"method": "PUT", "path": path, "body": body})
+
     with open(f"ops_rm_r_templates_output/roles_{apmid}.json", "w") as f:
         f.write("\n".join(all_roles))
 
     with open(f"ops_rm_r_templates_output/role_mappings_{apmid}.json", "w") as f:
         f.write("\n".join(all_role_mappings))
+
+    with open(f"ops_rm_r_templates_output/roles_{apmid}_pushable.json", "w") as f:
+        json.dump(pushable_roles, f, indent=2)
+
+    with open(f"ops_rm_r_templates_output/role_mappings_{apmid}_pushable.json", "w") as f:
+        json.dump(pushable_role_mappings, f, indent=2)
 
     print("Consolidated templates generated and saved in 'ops_rm_r_templates_output/' directory.")
 

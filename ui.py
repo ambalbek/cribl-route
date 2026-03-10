@@ -483,7 +483,7 @@ with tab2:
                     st.error(e)
             st.stop()
 
-        rm_order_val = "elk" if rm_order == "ELK first" else "cribl"
+        rm_order_val = "elk-first" if rm_order == "ELK first" else "cribl-first"
         cmd_rm = build_command_rm(
             app_name    = rm_app_name,
             apmid       = rm_apmid,

@@ -31,9 +31,17 @@ def get_workspace(config: dict, name: str) -> dict:
     return workspaces[name]
 
 
-def build_workspace_urls(config: dict, workspace_cfg: dict) -> tuple[str, str]:
+def get_worker_groups(workspace_cfg: dict) -> list[str]:
+    """Returns the list of worker groups defined for a workspace."""
+    groups = workspace_cfg.get("worker_groups", [])
+    if not groups:
+        die("[ERR] No worker_groups defined for this workspace in config")
+    return groups
+
+
+def build_workspace_urls(config: dict, workspace_cfg: dict, worker_group: str) -> tuple[str, str]:
     """
-    Returns (root_url, api_base_url) for the workspace.
+    Returns (root_url, api_base_url) for the workspace + selected worker group.
 
     root_url     — used for /api/v1/auth/login
     api_base_url — used for all other API calls, scoped to the worker group:
@@ -43,7 +51,6 @@ def build_workspace_urls(config: dict, workspace_cfg: dict) -> tuple[str, str]:
     workspaces to point to different Cribl clusters.
     """
     root_url = workspace_cfg.get("base_url", config.get("base_url", "")).rstrip("/")
-    worker_group = workspace_cfg["worker_group"]
     api_base = f"{root_url}/api/v1/m/{worker_group}"
     return root_url, api_base
 

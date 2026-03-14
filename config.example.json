@@ -33,7 +33,11 @@
 
   "workspaces": {
     "dev": {
-      "worker_group": "dev",
+      "worker_groups": [
+        "wg-dev-01", "wg-dev-02", "wg-dev-03", "wg-dev-04",
+        "wg-dev-05", "wg-dev-06", "wg-dev-07", "wg-dev-08",
+        "wg-dev-09", "wg-dev-10", "wg-dev-11", "wg-dev-12"
+      ],
       "dest_templates": {
         "azn": "blob_dest_template_azn_dev.json",
         "azs": "blob_dest_template_azs_dev.json"
@@ -41,7 +45,11 @@
       "description": "Development workspace"
     },
     "test": {
-      "worker_group": "test",
+      "worker_groups": [
+        "wg-test-01", "wg-test-02", "wg-test-03", "wg-test-04",
+        "wg-test-05", "wg-test-06", "wg-test-07", "wg-test-08",
+        "wg-test-09", "wg-test-10", "wg-test-11", "wg-test-12"
+      ],
       "dest_templates": {
         "azn": "blob_dest_template_azn_test.json",
         "azs": "blob_dest_template_azs_test.json"
@@ -49,7 +57,11 @@
       "description": "Test workspace"
     },
     "prod": {
-      "worker_group": "prod",
+      "worker_groups": [
+        "wg-prod-01", "wg-prod-02", "wg-prod-03", "wg-prod-04",
+        "wg-prod-05", "wg-prod-06", "wg-prod-07", "wg-prod-08",
+        "wg-prod-09", "wg-prod-10", "wg-prod-11", "wg-prod-12"
+      ],
       "dest_templates": {
         "azn": "blob_dest_template_azn_prod.json",
         "azs": "blob_dest_template_azs_prod.json"
@@ -62,7 +74,7 @@
   "_workspace_options_reference": {
     "_comment": "Optional fields you can add to any workspace entry:",
     "base_url": "overrides the global base_url for this workspace — use this to point to a different Cribl cluster",
-    "routes_table": "route table name used in GET/PATCH /routes/{routes_table} — defaults to the worker_group name",
+    "routes_table": "route table name used in GET/PATCH /routes/{routes_table} — defaults to \"default\" if omitted",
     "skip_ssl": "true/false — overrides global skip_ssl for this workspace only",
     "require_allow": "true — forces the user to type ALLOW before any writes",
     "route_template": "path to a per-workspace route template override (skips region lookup)",

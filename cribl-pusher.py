@@ -3,11 +3,11 @@
 cribl-pusher  —  Add routes + upsert destinations across Cribl workspaces.
 
 Usage examples:
-  python cribl-pusher.py                                  # fully interactive
-  python cribl-pusher.py --workspace dev --appid APP1 --appname "My App"
-  python cribl-pusher.py --workspace prod --allow-prod --from-file --appfile appids.txt --yes
-  python cribl-pusher.py --workspace test --region azn --dry-run --from-file
-  python cribl-pusher.py --workspace dev --log-level DEBUG --log-file run.log --dry-run --from-file
+  python cribl-pusher.py                                                          # fully interactive
+  python cribl-pusher.py --workspace dev --worker-group wg-dev-01 --region azn --appid APP1 --appname "My App"
+  python cribl-pusher.py --workspace prod --worker-group wg-prod-01 --region azn --allow-prod --from-file --appfile appids.txt --yes
+  python cribl-pusher.py --workspace test --worker-group wg-test-01 --region azs --dry-run --from-file
+  python cribl-pusher.py --workspace dev --worker-group wg-dev-02 --region azn --log-level DEBUG --log-file run.log --dry-run --from-file
 """
 import os
 import json
@@ -31,6 +31,7 @@ from cribl_config import (
     load_config, get_workspace_names, get_workspace,
     build_workspace_urls, resolve_credentials, get_cribl_urls,
     get_route_template_path, get_dest_template_path, get_dest_prefix,
+    get_worker_groups,
 )
 
 
@@ -50,7 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Workspace
     p.add_argument("--workspace",
-                   help="Workspace name from config (if omitted, prompts interactively)")
+                   help="Workspace/environment name from config (if omitted, prompts interactively)")
+    p.add_argument("--worker-group", dest="worker_group", default="",
+                   help="Worker group within the workspace (if omitted, prompts interactively)")
     p.add_argument("--region", choices=["azn", "azs"],
                    help="Region: azn or azs (selects route + dest templates; prompts if omitted)")
     p.add_argument("--allow-prod", action="store_true",
@@ -121,6 +124,13 @@ def main():
 
     workspace_cfg = get_workspace(config, args.workspace)
 
+    worker_groups = get_worker_groups(workspace_cfg)
+    if not args.worker_group:
+        args.worker_group = prompt_choice("Select worker group", worker_groups)
+    elif args.worker_group not in worker_groups:
+        die(f"[ERR] Worker group '{args.worker_group}' not in workspace '{args.workspace}'. "
+            f"Available: {worker_groups}")
+
     if not args.region:
         args.region = prompt_choice("Select region", ["azn", "azs"])
 
@@ -181,17 +191,17 @@ def main():
     snapshot_dir = args.snapshot_dir or config.get("snapshot_dir", "cribl_snapshots")
 
     # ── URLs ──────────────────────────────────────────────────────────────────
-    root_url, api_base = build_workspace_urls(config, workspace_cfg)
+    root_url, api_base = build_workspace_urls(config, workspace_cfg, args.worker_group)
 
     # ── Cribl URL selection ───────────────────────────────────────────────────
     cribl_urls = get_cribl_urls(config)
     if args.cribl_url.strip():
         root_url = args.cribl_url.rstrip("/")
-        api_base = f"{root_url}/api/v1/m/{workspace_cfg['worker_group']}"
+        api_base = f"{root_url}/api/v1/m/{args.worker_group}"
     elif cribl_urls:
         selected_url = prompt_choice("Select Cribl URL", cribl_urls)
         root_url = selected_url
-        api_base = f"{root_url}/api/v1/m/{workspace_cfg['worker_group']}"
+        api_base = f"{root_url}/api/v1/m/{args.worker_group}"
 
     # ── Templates ─────────────────────────────────────────────────────────────
     route_tmpl_path = get_route_template_path(config, workspace_cfg, args.region)
@@ -234,8 +244,8 @@ def main():
     # ── Summary ───────────────────────────────────────────────────────────────
     log.info("=== TARGET ===")
     log.info(f"workspace    : {args.workspace}  ({workspace_cfg.get('description', '')})")
+    log.info(f"worker_group : {args.worker_group}")
     log.info(f"region       : {args.region}")
-    log.info(f"worker_group : {workspace_cfg['worker_group']}")
     log.info(f"api_base     : {api_base}")
     log.info(f"routes_url   : {routes_url}")
     log.info(f"mode         : {mode_desc}")

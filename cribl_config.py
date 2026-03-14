@@ -48,6 +48,52 @@ def build_workspace_urls(config: dict, workspace_cfg: dict) -> tuple[str, str]:
     return root_url, api_base
 
 
+def get_cribl_urls(config: dict) -> list[str]:
+    return [u.rstrip("/") for u in config.get("cribl_urls", []) if u]
+
+
+def get_route_template_path(config: dict, workspace_cfg: dict, region: str) -> str:
+    """
+    Returns the route template path to use.
+    Priority: workspace-level override > region lookup in route_templates map.
+    """
+    override = workspace_cfg.get("route_template", "")
+    if override:
+        return override
+    templates = config.get("route_templates", {})
+    path = templates.get(region, "")
+    if not path:
+        die(f"[ERR] No route_template defined for region '{region}' in config route_templates")
+    return path
+
+
+def get_dest_template_path(config: dict, workspace_cfg: dict, region: str) -> str:
+    """
+    Returns the dest template path to use.
+    Priority: workspace-level single override > workspace dest_templates[region] map.
+    """
+    override = workspace_cfg.get("dest_template", "")
+    if override:
+        return override
+    templates = workspace_cfg.get("dest_templates", {})
+    path = templates.get(region, "")
+    if not path:
+        die(f"[ERR] No dest_template defined for region '{region}' in workspace config")
+    return path
+
+
+def get_dest_prefix(config: dict, workspace_cfg: dict, region: str) -> str:
+    """
+    Returns the destination ID prefix for the given region.
+    Falls back to a workspace-level override if set.
+    """
+    override = workspace_cfg.get("dest_prefix", "")
+    if override:
+        return override
+    prefixes = config.get("dest_prefixes", {})
+    return prefixes.get(region, f"abcd-blob-storage-{region}")
+
+
 def get_workspace_url(config: dict, workspace_cfg: dict) -> str:
     """Returns the effective base_url for a workspace (for display purposes)."""
     return workspace_cfg.get("base_url", config.get("base_url", "")).rstrip("/")

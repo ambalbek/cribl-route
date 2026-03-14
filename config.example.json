@@ -19,36 +19,42 @@
     "password": ""
   },
 
-  "route_template": "route_template.json",
+  "route_templates": {
+    "azn": "route_template_azn.json",
+    "azs": "route_template_azs.json"
+  },
+  "dest_prefixes": {
+    "azn": "abcd-blob-storage-northcentralus",
+    "azs": "abcd-blob-storage-southcentralus"
+  },
   "snapshot_dir": "cribl_snapshots",
   "min_existing_total_routes": 1,
   "diff_lines": 3,
 
   "workspaces": {
-    "azn-dev": {
-      "base_url": "https://cribl-azn.example.com:9000",
+    "dev": {
       "worker_group": "dev",
-      "dest_template": "blob_dest_template_dev.json",
-      "description": "Azure North — Dev"
+      "dest_templates": {
+        "azn": "blob_dest_template_azn_dev.json",
+        "azs": "blob_dest_template_azs_dev.json"
+      },
+      "description": "Development workspace"
     },
-    "azs-dev": {
-      "base_url": "https://cribl-azs.example.com:9000",
-      "worker_group": "dev",
-      "dest_template": "blob_dest_template_dev.json",
-      "description": "Azure South — Dev"
+    "test": {
+      "worker_group": "test",
+      "dest_templates": {
+        "azn": "blob_dest_template_azn_test.json",
+        "azs": "blob_dest_template_azs_test.json"
+      },
+      "description": "Test workspace"
     },
-    "azn-prod": {
-      "base_url": "https://cribl-azn.example.com:9000",
+    "prod": {
       "worker_group": "prod",
-      "dest_template": "blob_dest_template_prod.json",
-      "description": "Azure North — Prod",
-      "require_allow": true
-    },
-    "azs-prod": {
-      "base_url": "https://cribl-azs.example.com:9000",
-      "worker_group": "prod",
-      "dest_template": "blob_dest_template_prod.json",
-      "description": "Azure South — Prod",
+      "dest_templates": {
+        "azn": "blob_dest_template_azn_prod.json",
+        "azs": "blob_dest_template_azs_prod.json"
+      },
+      "description": "Production workspace",
       "require_allow": true
     }
   },
@@ -59,7 +65,8 @@
     "routes_table": "route table name used in GET/PATCH /routes/{routes_table} — defaults to the worker_group name",
     "skip_ssl": "true/false — overrides global skip_ssl for this workspace only",
     "require_allow": "true — forces the user to type ALLOW before any writes",
-    "route_template": "path to a custom route template JSON for this workspace",
+    "route_template": "path to a per-workspace route template override (skips region lookup)",
+    "dest_template": "path to a per-workspace dest template override (skips region lookup)",
     "description": "human-readable label shown in the TARGET banner"
   }
 }

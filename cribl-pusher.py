@@ -6,7 +6,7 @@ Usage examples:
   python cribl-pusher.py                                  # fully interactive
   python cribl-pusher.py --workspace dev --appid APP1 --appname "My App"
   python cribl-pusher.py --workspace prod --allow-prod --from-file --appfile appids.txt --yes
-  python cribl-pusher.py --workspace qa --dry-run --from-file
+  python cribl-pusher.py --workspace test --region azn --dry-run --from-file
   python cribl-pusher.py --workspace dev --log-level DEBUG --log-file run.log --dry-run --from-file
 """
 import os
@@ -29,7 +29,8 @@ from cribl_api import (
 )
 from cribl_config import (
     load_config, get_workspace_names, get_workspace,
-    build_workspace_urls, resolve_credentials,
+    build_workspace_urls, resolve_credentials, get_cribl_urls,
+    get_route_template_path, get_dest_template_path, get_dest_prefix,
 )
 
 
@@ -43,12 +44,15 @@ def build_parser() -> argparse.ArgumentParser:
     # Config
     p.add_argument("--config", default="config.json",
                    help="Path to config file (default: config.json)")
+    # Cribl URL
     p.add_argument("--cribl-url", default="",
-                   help="Cribl base URL override (overrides config base_url and workspace base_url)")
+                   help="Cribl base URL (overrides config cribl_urls list and workspace base_url)")
 
     # Workspace
     p.add_argument("--workspace",
                    help="Workspace name from config (if omitted, prompts interactively)")
+    p.add_argument("--region", choices=["azn", "azs"],
+                   help="Region: azn or azs (selects route + dest templates; prompts if omitted)")
     p.add_argument("--allow-prod", action="store_true",
                    help="Required for workspaces marked require_allow=true")
 
@@ -117,6 +121,9 @@ def main():
 
     workspace_cfg = get_workspace(config, args.workspace)
 
+    if not args.region:
+        args.region = prompt_choice("Select region", ["azn", "azs"])
+
     if workspace_cfg.get("require_allow") and not args.allow_prod:
         log.warning(f"Workspace '{args.workspace}' requires explicit confirmation.")
         answer = prompt_text('Type "ALLOW" to proceed (anything else aborts)', "")
@@ -175,16 +182,21 @@ def main():
 
     # ── URLs ──────────────────────────────────────────────────────────────────
     root_url, api_base = build_workspace_urls(config, workspace_cfg)
+
+    # ── Cribl URL selection ───────────────────────────────────────────────────
+    cribl_urls = get_cribl_urls(config)
     if args.cribl_url.strip():
         root_url = args.cribl_url.rstrip("/")
         api_base = f"{root_url}/api/v1/m/{workspace_cfg['worker_group']}"
+    elif cribl_urls:
+        selected_url = prompt_choice("Select Cribl URL", cribl_urls)
+        root_url = selected_url
+        api_base = f"{root_url}/api/v1/m/{workspace_cfg['worker_group']}"
 
     # ── Templates ─────────────────────────────────────────────────────────────
-    route_tmpl_path = (workspace_cfg.get("route_template")
-                       or config.get("route_template", "route_template.json"))
-    dest_tmpl_path  = workspace_cfg.get("dest_template", "")
-    if not dest_tmpl_path:
-        die(f"[ERR] No dest_template defined for workspace '{args.workspace}'")
+    route_tmpl_path = get_route_template_path(config, workspace_cfg, args.region)
+    dest_tmpl_path  = get_dest_template_path(config, workspace_cfg, args.region)
+    dest_prefix     = get_dest_prefix(config, workspace_cfg, args.region)
 
     route_template    = read_json(route_tmpl_path)
     dest_template     = read_json(dest_tmpl_path)
@@ -215,13 +227,14 @@ def main():
         return session.patch(url, headers=H(), json=payload, timeout=60)
 
     outputs_url  = f"{api_base}/system/outputs"
-    routes_table = workspace_cfg.get("routes_table", workspace_cfg["worker_group"])
+    routes_table = workspace_cfg.get("routes_table", "default")
     routes_url   = f"{api_base}/routes/{routes_table}"
     group_id     = (args.group_id or "").strip() or None
 
     # ── Summary ───────────────────────────────────────────────────────────────
     log.info("=== TARGET ===")
     log.info(f"workspace    : {args.workspace}  ({workspace_cfg.get('description', '')})")
+    log.info(f"region       : {args.region}")
     log.info(f"worker_group : {workspace_cfg['worker_group']}")
     log.info(f"api_base     : {api_base}")
     log.info(f"routes_url   : {routes_url}")
@@ -306,8 +319,8 @@ def main():
         route           = copy.deepcopy(route_template)
         route["id"]     = appid
         route["filter"] = f'apmId == "{appid}"'
-        route["output"] = f"abcd-blob-storage-northcentralus-{appid}"
-        route["name"]   = f"abcd-blob-storage-route-{appid}"
+        route["output"] = f"{dest_prefix}-{appid}"
+        route["name"]   = f"{dest_prefix}-route-{appid}"
         route           = normalize_route(route, fallback_pipeline)
 
         if route["name"] in existing_names or route["filter"] in existing_filters:
@@ -367,7 +380,7 @@ def main():
 
     # ── 6) Create destinations ────────────────────────────────────────────────
     for appid, appname in apps:
-        dest_id = f"abcd-blob-storage-northcentralus-{appid}"
+        dest_id = f"{dest_prefix}-{appid}"
 
         if dest_id in existing_dest_ids:
             log.info(f"[SKIP] Destination already exists: {dest_id} — skipping")

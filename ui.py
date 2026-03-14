@@ -268,7 +268,7 @@ with tab1:
         requires_allow = ws_cfg.get("require_allow", False)
 
         worker_group_list = ws_cfg.get("worker_groups", [])
-        selected_wgs = st.multiselect("Select worker group(s)", worker_group_list, placeholder="Choose one or more worker groups")
+        selected_wgs = st.multiselect("Select worker group(s)", worker_group_list, placeholder="Choose one or more worker groups", key=f"wg_{selected_ws}")
 
         selected_region = st.radio("Region", ["azn", "azs"], horizontal=True)
 

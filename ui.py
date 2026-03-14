@@ -136,7 +136,8 @@ def build_command_rm(
     mode, app_name, apmid, appfile_path,
     elk_url_nonprod, elk_token_nonprod, elk_user_nonprod, elk_password_nonprod,
     elk_url_prod,    elk_token_prod,    elk_user_prod,    elk_password_prod,
-    cribl_url, workspace, allow_prod, order,
+    cribl_url, cribl_token, cribl_username, cribl_password,
+    workspace, allow_prod, order,
     skip_elk, skip_cribl,
     dry_run, skip_ssl, log_level,
 ) -> list[str]:
@@ -146,6 +147,11 @@ def build_command_rm(
         cmd += ["--app_name", app_name.strip(), "--apmid", apmid.strip()]
     else:
         cmd += ["--from-file", "--appfile", appfile_path]
+
+    if cribl_token.strip():
+        cmd += ["--token", cribl_token.strip()]
+    elif cribl_username.strip() and cribl_password.strip():
+        cmd += ["--username", cribl_username.strip(), "--password", cribl_password.strip()]
 
     if not skip_elk:
         cmd += ["--elk-url", elk_url_nonprod.strip()]
@@ -525,6 +531,13 @@ with tab2:
         else:
             rm_allow_prod = False
 
+        with st.expander("Cribl Credentials (leave blank to use config.json)"):
+            rm_cribl_token    = st.text_input("Cribl Bearer Token", type="password", placeholder="Leave blank to use config.json", key="rm_cribl_token")
+            st.markdown("*— or —*")
+            rc1, rc2 = st.columns(2)
+            with rc1: rm_cribl_username = st.text_input("Cribl Username", key="rm_cribl_username")
+            with rc2: rm_cribl_password = st.text_input("Cribl Password", type="password", key="rm_cribl_password")
+
         st.divider()
 
         st.subheader("Options")
@@ -611,6 +624,9 @@ with tab2:
                 elk_user_prod         = rm_elk_user_prod,
                 elk_password_prod     = rm_elk_password_prod,
                 cribl_url             = rm_cribl_url,
+                cribl_token           = rm_cribl_token,
+                cribl_username        = rm_cribl_username,
+                cribl_password        = rm_cribl_password,
                 workspace   = rm_selected_ws,
                 allow_prod  = rm_allow_prod,
                 order       = rm_order_val,
@@ -625,6 +641,7 @@ with tab2:
                 "***" if i > 0 and cmd_rm[i - 1] in (
                     "--elk-password", "--elk-token",
                     "--elk-password-prod", "--elk-token-prod",
+                    "--password", "--token",
                 ) else part
                 for i, part in enumerate(cmd_rm)
             ]

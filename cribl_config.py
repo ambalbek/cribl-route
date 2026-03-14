@@ -98,7 +98,7 @@ def get_dest_prefix(config: dict, workspace_cfg: dict, region: str) -> str:
     if override:
         return override
     prefixes = config.get("dest_prefixes", {})
-    return prefixes.get(region, f"abcd-blob-storage-{region}")
+    return prefixes.get(region, f"hcsc-blob-storage-{region}")
 
 
 def get_workspace_url(config: dict, workspace_cfg: dict) -> str:

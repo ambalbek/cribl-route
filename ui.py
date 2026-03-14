@@ -45,7 +45,7 @@ def ws_label(name: str, cfg: dict) -> str:
 
 
 def build_command(
-    workspace, allow_prod, cribl_url, mode, appid, appname, appfile_path,
+    workspace, worker_group, region, allow_prod, cribl_url, mode, appid, appname, appfile_path,
     dry_run, skip_ssl, log_level, log_file,
     token, username, password,
     group_id, create_missing_group, group_name,
@@ -55,6 +55,8 @@ def build_command(
         sys.executable, str(PUSHER),
         "--yes",
         "--workspace", workspace,
+        "--worker-group", worker_group,
+        "--region", region,
         "--log-level", log_level,
         "--config", str(CONFIG_PATH),
     ]
@@ -265,6 +267,11 @@ with tab1:
         ws_cfg         = workspaces[selected_ws]
         requires_allow = ws_cfg.get("require_allow", False)
 
+        worker_group_list = ws_cfg.get("worker_groups", [])
+        selected_wgs = st.multiselect("Select worker group(s)", worker_group_list, placeholder="Choose one or more worker groups")
+
+        selected_region = st.radio("Region", ["azn", "azs"], horizontal=True)
+
         if requires_allow:
             st.warning(f"**{selected_ws}** is a protected workspace.")
             allow_prod = st.checkbox("Allow production writes (required for this workspace)")
@@ -358,6 +365,9 @@ with tab1:
         if requires_allow and not allow_prod:
             errors.append(f"Workspace '{selected_ws}' requires the 'Allow production writes' checkbox.")
 
+        if not selected_wgs:
+            errors.append("Select at least one worker group.")
+
         if errors:
             with right:
                 for e in errors:
@@ -373,48 +383,58 @@ with tab1:
                     tmp.write(uploaded_file.getvalue())
                     tmp_path = tmp.name
 
-            cmd = build_command(
-                workspace             = selected_ws,
-                allow_prod            = allow_prod,
-                cribl_url             = cribl_url,
-                mode                  = "single" if mode == "Single App" else "bulk",
-                appid                 = appid,
-                appname               = appname,
-                appfile_path          = tmp_path or "",
-                dry_run               = dry_run,
-                skip_ssl              = skip_ssl,
-                log_level             = log_level,
-                log_file              = log_file,
-                token                 = token,
-                username              = username,
-                password              = password,
-                group_id              = group_id,
-                create_missing_group  = create_missing_group,
-                group_name            = group_name,
-                min_routes            = min_routes,
-                diff_lines            = diff_lines,
-                snapshot_dir          = snapshot_dir,
-            )
+            all_output   = ""
+            last_rc      = 0
 
-            masked = [
-                "***" if i > 0 and cmd[i - 1] in ("--password", "--token") else part
-                for i, part in enumerate(cmd)
-            ]
+            for wg in selected_wgs:
+                cmd = build_command(
+                    workspace             = selected_ws,
+                    worker_group          = wg,
+                    region                = selected_region,
+                    allow_prod            = allow_prod,
+                    cribl_url             = cribl_url,
+                    mode                  = "single" if mode == "Single App" else "bulk",
+                    appid                 = appid,
+                    appname               = appname,
+                    appfile_path          = tmp_path or "",
+                    dry_run               = dry_run,
+                    skip_ssl              = skip_ssl,
+                    log_level             = log_level,
+                    log_file              = log_file,
+                    token                 = token,
+                    username              = username,
+                    password              = password,
+                    group_id              = group_id,
+                    create_missing_group  = create_missing_group,
+                    group_name            = group_name,
+                    min_routes            = min_routes,
+                    diff_lines            = diff_lines,
+                    snapshot_dir          = snapshot_dir,
+                )
+
+                masked = [
+                    "***" if i > 0 and cmd[i - 1] in ("--password", "--token") else part
+                    for i, part in enumerate(cmd)
+                ]
+                with right:
+                    with st.expander(f"Command — {wg}"):
+                        st.code(" ".join(masked), language="bash")
+                    with st.spinner(f"Running {wg}..."):
+                        output, returncode = run_subprocess(cmd)
+
+                all_output += f"\n{'='*60}\n Worker group: {wg}\n{'='*60}\n{output}"
+                if returncode != 0:
+                    last_rc = returncode
+
+            st.session_state.last_output     = all_output.strip()
+            st.session_state.last_returncode = last_rc
+
             with right:
-                with st.expander("Command"):
-                    st.code(" ".join(masked), language="bash")
-                with st.spinner("Running..."):
-                    output, returncode = run_subprocess(cmd)
-
-            st.session_state.last_output     = output
-            st.session_state.last_returncode = returncode
-
-            with right:
-                if returncode == 0:
-                    st.success("Completed successfully (exit code 0).")
+                if last_rc == 0:
+                    st.success(f"All {len(selected_wgs)} worker group(s) completed successfully.")
                 else:
-                    st.error(f"Finished with errors (exit code {returncode}).")
-                out_placeholder.code(output, language="")
+                    st.error(f"Finished with errors (exit code {last_rc}).")
+                out_placeholder.code(all_output.strip(), language="")
 
         finally:
             if tmp_path and os.path.exists(tmp_path):

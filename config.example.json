@@ -24,8 +24,8 @@
     "azs": "route_template_azs.json"
   },
   "dest_prefixes": {
-    "azn": "abcd-blob-storage-northcentralus",
-    "azs": "abcd-blob-storage-southcentralus"
+    "azn": "hcsc-blob-storage-northcentralus",
+    "azs": "hcsc-blob-storage-southcentralus"
   },
   "snapshot_dir": "cribl_snapshots",
   "min_existing_total_routes": 1,
